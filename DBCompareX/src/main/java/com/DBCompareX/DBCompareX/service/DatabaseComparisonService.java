@@ -1,7 +1,7 @@
 package com.DBCompareX.DBCompareX.service;
 
 
-import com.DBCompareX.DBCompareX.DatabaseConnector;
+import com.DBCompareX.DBCompareX.dao.entities.DatabaseConnector;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
