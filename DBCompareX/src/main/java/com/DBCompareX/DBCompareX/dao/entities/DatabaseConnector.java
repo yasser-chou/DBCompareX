@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.sql.DataSource;
+import java.sql.Connection;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -30,12 +31,27 @@ public class DatabaseConnector {
      */
     public boolean connectToDatabases(String srcDbType, String srcHost, int srcPort, String srcDbName, String srcUser, String srcPass,
                                       String tgtDbType, String tgtHost, int tgtPort, String tgtDbName, String tgtUser, String tgtPass) {
-        DataSource sourceDS = getDataSource(srcDbType, srcHost, srcPort, srcDbName, srcUser, srcPass);
-        DataSource targetDS = getDataSource(tgtDbType, tgtHost, tgtPort, tgtDbName, tgtUser, tgtPass);
+        try {
+            DataSource sourceDS = getDataSource(srcDbType, srcHost, srcPort, srcDbName, srcUser, srcPass);
+            DataSource targetDS = getDataSource(tgtDbType, tgtHost, tgtPort, tgtDbName, tgtUser, tgtPass);
 
-        boolean isConnected = sourceDS != null && targetDS != null;
-        logger.info("Database connection status: {}", isConnected ? "Connected" : "Failed to connect");
-        return isConnected;
+            boolean isConnected = testConnection(sourceDS) && testConnection(targetDS);
+            logger.info("Database connection status: {}", isConnected ? "Connected" : "Failed to connect");
+            return isConnected;
+        } catch (Exception e) {
+            logger.error("Failed to connect to databases: {}", e.getMessage());
+            closeAllConnections(); // Clear cached connections on failure
+            return false;
+        }
+    }
+
+    private boolean testConnection(DataSource dataSource) {
+        try (Connection connection = dataSource.getConnection()) {
+            return connection != null && !connection.isClosed();
+        } catch (Exception e) {
+            logger.error("Connection test failed: {}", e.getMessage());
+            return false;
+        }
     }
 
     /**
@@ -62,10 +78,10 @@ public class DatabaseConnector {
         dataSource.setMaximumPoolSize(10);
         dataSource.setMinimumIdle(2);
         dataSource.setIdleTimeout(30000);
-        dataSource.setMaxLifetime(1800000);
+        dataSource.setMaxLifetime(180000);
         dataSource.setConnectionTimeout(30000);
 
-        logger.info("Created DataSource for {} at {}:{}", dbType, host, port);
+        logger.info("Created DataSource for {} at {}:{}, JDBC URL: {}", dbType, host, port, jdbcUrl);
         return dataSource;
     }
 
@@ -77,7 +93,7 @@ public class DatabaseConnector {
             case "mysql" -> "jdbc:mysql://" + host + ":" + port + "/" + dbName + "?serverTimezone=UTC";
             case "postgresql" -> "jdbc:postgresql://" + host + ":" + port + "/" + dbName;
             case "sqlserver" -> "jdbc:sqlserver://" + host + ":" + port + ";databaseName=" + dbName;
-            case "oracle" -> "jdbc:oracle:thin:@" + host + ":" + port + ":" + dbName;
+            case "oracle" -> "jdbc:oracle:thin:@//" + host + ":" + port + "/" + dbName; // Use service name with double slashes
             default -> null;
         };
     }
