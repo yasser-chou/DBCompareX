@@ -68,18 +68,18 @@ public class DatabaseConnector {
         String jdbcUrl = getJdbcUrl(dbType, host, port, dbName);
         if (jdbcUrl == null) {
             logger.error("Unsupported database type: {}", dbType);
-            return null;
+            throw new IllegalArgumentException("Unsupported database type: " + dbType);
         }
 
         HikariDataSource dataSource = new HikariDataSource();
         dataSource.setJdbcUrl(jdbcUrl);
         dataSource.setUsername(username);
         dataSource.setPassword(password);
-        dataSource.setMaximumPoolSize(10);
-        dataSource.setMinimumIdle(2);
-        dataSource.setIdleTimeout(30000);
-        dataSource.setMaxLifetime(180000);
-        dataSource.setConnectionTimeout(30000);
+        dataSource.setMaximumPoolSize(10); // Max pool size
+        dataSource.setMinimumIdle(2); // Min idle connections
+        dataSource.setIdleTimeout(30000); // Idle timeout in milliseconds
+        dataSource.setMaxLifetime(180000); // Max lifetime in milliseconds
+        dataSource.setConnectionTimeout(30000); // Connection timeout in milliseconds
 
         logger.info("Created DataSource for {} at {}:{}, JDBC URL: {}", dbType, host, port, jdbcUrl);
         return dataSource;
@@ -89,13 +89,25 @@ public class DatabaseConnector {
      * Returns the JDBC URL for different database types.
      */
     private String getJdbcUrl(String dbType, String host, int port, String dbName) {
-        return switch (dbType.toLowerCase()) {
-            case "mysql" -> "jdbc:mysql://" + host + ":" + port + "/" + dbName + "?serverTimezone=UTC";
-            case "postgresql" -> "jdbc:postgresql://" + host + ":" + port + "/" + dbName;
-            case "sqlserver" -> "jdbc:sqlserver://" + host + ":" + port + ";databaseName=" + dbName;
-            case "oracle" -> "jdbc:oracle:thin:@//" + host + ":" + port + "/" + dbName; // Use service name with double slashes
-            default -> null;
-        };
+        String jdbcUrl = null;
+        switch (dbType.toLowerCase()) {
+            case "mysql":
+                jdbcUrl = "jdbc:mysql://" + host + ":" + port + "/" + dbName + "?serverTimezone=UTC";
+                break;
+            case "postgresql":
+                jdbcUrl = "jdbc:postgresql://" + host + ":" + port + "/" + dbName;
+                break;
+            case "sqlserver":
+                jdbcUrl = "jdbc:sqlserver://" + host + ":" + port + ";databaseName=" + dbName;
+                break;
+            case "oracle":
+                jdbcUrl = "jdbc:oracle:thin:@//" + host + ":" + port + "/" + dbName; // Use service name with double slashes
+                break;
+            default:
+                jdbcUrl = null; // Or throw an exception if needed
+                break;
+        }
+        return jdbcUrl;
     }
 
     /**
