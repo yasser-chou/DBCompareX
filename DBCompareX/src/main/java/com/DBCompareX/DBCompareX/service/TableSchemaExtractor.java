@@ -1,530 +1,903 @@
 package com.DBCompareX.DBCompareX.service;
 
-import com.DBCompareX.DBCompareX.dao.entities.DatabaseConnector;
+import com.DBCompareX.DBCompareX.config.DatabaseConfig;
 import com.DBCompareX.DBCompareX.dao.entities.ExcelGenerator;
 import com.DBCompareX.DBCompareX.dao.entities.TableMapping;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.spark.sql.*;
-import org.apache.spark.sql.types.DataTypes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.text.SimpleDateFormat;
+import java.io.File;
+import java.sql.*;
 import java.util.*;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
-
-import static org.apache.hadoop.shaded.org.apache.commons.lang3.ArrayUtils.toArray;
 
 @Service
 public class TableSchemaExtractor {
     private static final Logger logger = LoggerFactory.getLogger(TableSchemaExtractor.class);
-    private final DatabaseConnector databaseConnector;
+
+    private final DatabaseConfig databaseConfig;
     private final SparkSession sparkSession;
+    private final ExcelGenerator excelGenerator;
 
     @Autowired
-    private ExcelGenerator excelGenerator;
-
-    public TableSchemaExtractor(DatabaseConnector databaseConnector, SparkSession sparkSession) {
+    public TableSchemaExtractor(DatabaseConfig databaseConfig, SparkSession sparkSession, ExcelGenerator excelGenerator) {
+        this.databaseConfig = databaseConfig;
         this.sparkSession = sparkSession;
-        this.databaseConnector = databaseConnector;
+        this.excelGenerator = excelGenerator;
+
+        // Validate configuration on startup
+        if (this.databaseConfig == null) {
+            throw new IllegalStateException("DatabaseConfig is null. Check your Spring configuration.");
+        }
+        if (this.databaseConfig.getJdbcUrl() == null || this.databaseConfig.getJdbcUrl().isEmpty()) {
+            throw new IllegalStateException("JDBC URL configuration is missing or empty. Check your application.properties file.");
+        }
+        if (this.databaseConfig.getDriver() == null || this.databaseConfig.getDriver().isEmpty()) {
+            throw new IllegalStateException("Driver configuration is missing or empty. Check your application.properties file.");
+        }
+
+        logger.info("DatabaseConfig initialized with JDBC URLs: {}", this.databaseConfig.getJdbcUrl());
+        logger.info("DatabaseConfig initialized with Drivers: {}", this.databaseConfig.getDriver());
     }
 
-    public Map<String, Object> fetchDataFromBothDatabases(
-            String srcDbType, String tgtDbType,
-            String srcHost, int srcPort, String srcDbName, String srcUsername, String srcPassword,
-            String tgtHost, int tgtPort, String tgtDbName, String tgtUsername, String tgtPassword,
-            List<TableMapping> tableMappings) {
-        try {
-            logger.info("Starting data comparison for tables: {}", tableMappings);
-            Dataset<Row> srcDf = loadDatabaseData(srcDbType, srcHost, srcPort, srcDbName, srcUsername, srcPassword, tableMappings, true);
-            Dataset<Row> tgtDf = loadDatabaseData(tgtDbType, tgtHost, tgtPort, tgtDbName, tgtUsername, tgtPassword, tableMappings, false);
-            return compareDataframes(srcDf, tgtDf);
-        } catch (Exception e) {
-            logger.error("Error comparing databases: ", e);
-            throw new RuntimeException("Failed to compare databases: " + e.getMessage(), e);
+
+
+    // Class to represent table metadata
+    private static class TableMetadata {
+        private final String tableName;
+        private final List<String> primaryKeyColumns;
+        private final List<String> allColumns;
+
+        public TableMetadata(String tableName, List<String> primaryKeyColumns, List<String> allColumns) {
+            this.tableName = tableName;
+            this.primaryKeyColumns = primaryKeyColumns;
+            this.allColumns = allColumns;
+        }
+
+        public String getTableName() {
+            return tableName;
+        }
+
+        public List<String> getPrimaryKeyColumns() {
+            return primaryKeyColumns;
+        }
+
+        public List<String> getAllColumns() {
+            return allColumns;
         }
     }
 
     /**
-     * Generates an Excel report from the comparison results.
+     * Fetch all table names from a database
      */
-    public String generateExcelReport(Map<String, Object> comparisonResults, String outputPath) {
+    public List<String> fetchTableNames(String dbType, String host, int port,
+                                        String dbName, String username, String password) {
+        String jdbcUrl = getJdbcUrl(dbType, host, port, dbName);
+        List<String> tableNames = new ArrayList<>();
         try {
-            if (comparisonResults == null) {
-                throw new IllegalArgumentException("Comparison results cannot be null");
-            }
-
-            Map<String, List<Map<String, Object>>> formattedResults = new HashMap<>();
-
-            // Process each section dynamically
-            String[] sections = {"differences", "unmatched_source", "unmatched_target", "identical"};
-            for (String section : sections) {
-                List<Map<String, Object>> processedData = new ArrayList<>();
-                Object sectionData = comparisonResults.get(section);
-
-                if (sectionData instanceof List) {
-                    List<String> jsonList = (List<String>) sectionData;
-                    for (String json : jsonList) {
-                        if (json != null) {
-                            Map<String, Object> parsedData = parseJsonToMap(json);
-                            if (parsedData != null && !parsedData.isEmpty()) {
-                                // Sanitize data to ensure no null values
-                                Map<String, Object> sanitizedData = parsedData.entrySet().stream()
-                                        .collect(Collectors.toMap(
-                                                Map.Entry::getKey,
-                                                entry -> entry.getValue() != null ? entry.getValue() : ""
-                                        ));
-                                processedData.add(sanitizedData);
-                            }
+            testConnection(jdbcUrl, username, password);
+            try (Connection conn = getConnection(jdbcUrl, username, password)) {
+                DatabaseMetaData metaData = conn.getMetaData();
+                try (ResultSet tables = metaData.getTables(null, null, "%", new String[]{"TABLE"})) {
+                    while (tables.next()) {
+                        tableNames.add(tables.getString("TABLE_NAME").toLowerCase());
+                    }
+                }
+                if (tableNames.isEmpty()) {
+                    try (ResultSet tables = metaData.getTables(null, username.toUpperCase(), "%", new String[]{"TABLE"})) {
+                        while (tables.next()) {
+                            tableNames.add(tables.getString("TABLE_NAME").toLowerCase());
                         }
                     }
                 }
-                formattedResults.put(section, processedData);
+                logger.info("Found {} tables in database {}", tableNames.size(), dbName);
+                return tableNames;
             }
-
-            // Generate the Excel report
-            excelGenerator.generateComparisonReport(formattedResults, outputPath);
-            return outputPath;
-        } catch (Exception e) {
-            logger.error("Error generating Excel report: {}", e.getMessage(), e);
-            throw new RuntimeException("Failed to generate Excel report: " + e.getMessage(), e);
+        } catch (SQLException e) {
+            logger.error("Error fetching table names for database {}: {}", dbName, e.getMessage());
+            throw new RuntimeException("Failed to fetch table names: " + e.getMessage(), e);
         }
     }
 
-    private void processSection(Map<String, Object> comparisonResults, String sectionName, Map<String, List<Map<String, Object>>> formattedResults) {
-        List<Map<String, Object>> sectionData = new ArrayList<>();
-        List<String> jsonList = (List<String>) comparisonResults.get(sectionName);
-        if (jsonList != null) {
-            for (String json : jsonList) {
-                Map<String, Object> parsedData = parseJsonToMap(json);
-                if (parsedData != null) {
-                    sectionData.add(parsedData);
+    /**
+     * Test database connection before performing operations
+     */
+    private void testConnection(String jdbcUrl, String username, String password) throws SQLException {
+        logger.info("Testing connection to: {}", jdbcUrl);
+        try (Connection conn = getConnection(jdbcUrl, username, password)) {
+            if (!conn.isValid(5)) { // 5-second timeout
+                throw new SQLException("Connection test failed - connection is invalid");
+            }
+            logger.info("Connection test successful");
+        } catch (SQLException e) {
+            logger.error("Connection test failed: {}", e.getMessage());
+            throw new SQLException("Failed to connect to database: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Fetch table metadata including primary keys and all columns
+     */
+    public TableMetadata fetchTableMetadata(String dbType, String host, int port,
+                                            String dbName, String username, String password,
+                                            String tableName) {
+        String jdbcUrl = getJdbcUrl(dbType, host, port, dbName);
+        List<String> primaryKeyColumns = new ArrayList<>();
+        List<String> allColumns = new ArrayList<>();
+        try {
+            testConnection(jdbcUrl, username, password);
+            try (Connection conn = getConnection(jdbcUrl, username, password)) {
+                DatabaseMetaData metaData = conn.getMetaData();
+                try (ResultSet primaryKeys = metaData.getPrimaryKeys(null, null, tableName)) {
+                    while (primaryKeys.next()) {
+                        primaryKeyColumns.add(primaryKeys.getString("COLUMN_NAME").toLowerCase());
+                    }
+                }
+                if (primaryKeyColumns.isEmpty()) {
+                    try (ResultSet primaryKeys = metaData.getPrimaryKeys(null, username.toUpperCase(), tableName)) {
+                        while (primaryKeys.next()) {
+                            primaryKeyColumns.add(primaryKeys.getString("COLUMN_NAME").toLowerCase());
+                        }
+                    }
+                }
+                try (ResultSet columns = metaData.getColumns(null, null, tableName, "%")) {
+                    while (columns.next()) {
+                        allColumns.add(columns.getString("COLUMN_NAME").toLowerCase());
+                    }
+                }
+                if (allColumns.isEmpty()) {
+                    try (ResultSet columns = metaData.getColumns(null, username.toUpperCase(), tableName, "%")) {
+                        while (columns.next()) {
+                            allColumns.add(columns.getString("COLUMN_NAME").toLowerCase());
+                        }
+                    }
+                }
+                logger.info("Table {} has {} columns with {} primary keys",
+                        tableName, allColumns.size(), primaryKeyColumns.size());
+                return new TableMetadata(tableName, primaryKeyColumns, allColumns);
+            }
+        } catch (SQLException e) {
+            logger.error("Error fetching table metadata for table {}: {}", tableName, e.getMessage());
+            throw new RuntimeException("Failed to fetch table metadata: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Find common tables between two databases with improved matching
+     */
+    public List<TableMapping> findCommonTables(
+            String srcDbType, String tgtDbType,
+            String srcHost, int srcPort, String srcDbName, String srcUsername, String srcPassword,
+            String tgtHost, int tgtPort, String tgtDbName, String tgtUsername, String tgtPassword) {
+
+        List<String> srcTables = fetchTableNames(srcDbType, srcHost, srcPort, srcDbName, srcUsername, srcPassword);
+        List<String> tgtTables = fetchTableNames(tgtDbType, tgtHost, tgtPort, tgtDbName, tgtUsername, tgtPassword);
+
+        // First try exact matches
+        Map<String, String> tgtTablesMap = tgtTables.stream()
+                .collect(Collectors.toMap(String::toLowerCase, t -> t, (v1, v2) -> v1));
+
+        List<TableMapping> commonTables = new ArrayList<>();
+        Set<String> matchedTargetTables = new HashSet<>();
+
+        // First pass: exact matches
+        for (String srcTable : srcTables) {
+            String srcTableLower = srcTable.toLowerCase();
+            if (tgtTablesMap.containsKey(srcTableLower)) {
+                String tgtTable = tgtTablesMap.get(srcTableLower);
+                matchedTargetTables.add(tgtTable.toLowerCase());
+
+                TableMetadata srcMetadata = fetchTableMetadata(srcDbType, srcHost, srcPort, srcDbName, srcUsername, srcPassword, srcTable);
+                TableMetadata tgtMetadata = fetchTableMetadata(tgtDbType, tgtHost, tgtPort, tgtDbName, tgtUsername, tgtPassword, tgtTable);
+
+                TableMapping mapping = createTableMapping(srcTable, tgtTable, srcMetadata, tgtMetadata,
+                        srcDbType, srcHost, srcPort, srcDbName, srcUsername, srcPassword,
+                        tgtDbType, tgtHost, tgtPort, tgtDbName, tgtUsername, tgtPassword);
+                commonTables.add(mapping);
+                logger.info("Found exact match table: {} (source) and {} (target) with key columns: {}",
+                        srcTable, tgtTable, mapping.getKeyColumns());
+            }
+        }
+
+        // Second pass: fuzzy matches for remaining tables (optional)
+        // This could be implemented to match tables with different names but similar structure
+
+        return commonTables;
+    }
+
+    /**
+     * Identifies primary keys and unique constraints for a table
+     */
+    private List<String> identifyPrimaryKeys(String dbType, String host, int port, String dbName,
+                                           String username, String password, String tableName) {
+        List<String> primaryKeys = new ArrayList<>();
+        Connection conn = null;
+        try {
+            conn = getConnection(dbType, host, port, dbName, username, password);
+            DatabaseMetaData metaData = conn.getMetaData();
+
+            logger.info("Attempting to identify primary keys for table: {}", tableName);
+
+            // First try to get primary keys
+            try (ResultSet pkRs = metaData.getPrimaryKeys(null, null, tableName)) {
+                while (pkRs.next()) {
+                    String columnName = pkRs.getString("COLUMN_NAME");
+                    primaryKeys.add(columnName.toLowerCase());
+                    logger.info("Found primary key column: {}", columnName);
                 }
             }
-        }
-        formattedResults.put(sectionName, sectionData);
-    }
-    /**
-     * Helper method to parse JSON string to Map.
-     */
-    private Map<String, Object> parseJsonToMap(String json) {
-        if (json == null || json.trim().isEmpty()) {
-            return new HashMap<>();
-        }
 
-        ObjectMapper objectMapper = new ObjectMapper();
-        try {
-            Map<String, Object> result = objectMapper.readValue(
-                    json,
-                    new TypeReference<Map<String, Object>>() {}
-            );
-            return result != null ? result : new HashMap<>();
-        } catch (JsonProcessingException e) {
-            logger.error("Error parsing JSON: {}", e.getMessage(), e);
-            return new HashMap<>();
-        }
-    }
-
-    /**
-     * Loads data from the database into a Spark DataFrame.
-     */
-    private Dataset<Row> loadDatabaseData(String dbType, String host, int port, String dbName, String username, String password, List<TableMapping> tableMappings, boolean isSource) {
-        try {
-            String jdbcUrl = getJdbcUrl(dbType, host, port, dbName);
-            Properties connectionProperties = new Properties();
-            connectionProperties.put("user", username);
-            connectionProperties.put("password", password);
-            connectionProperties.put("driver", getDriverClass(dbType));
-
-            Dataset<Row> combinedDf = null;
-            for (TableMapping mapping : tableMappings) {
-                String tableName = isSource ? mapping.getSourceTable() : mapping.getTargetTable();
-                logger.info("Loading data from table: {}", tableName);
-                Dataset<Row> tableDf = sparkSession.read()
-                        .jdbc(jdbcUrl, tableName, connectionProperties)
-                        .withColumn("source_table", functions.lit(mapping.getSourceTable()))
-                        .withColumn("target_table", functions.lit(mapping.getTargetTable()));
-                tableDf = normalizeColumnNames(tableDf);
-                combinedDf = (combinedDf == null) ? tableDf : combinedDf.unionByName(tableDf, true);
+            // If no primary keys found, look for unique indices
+            if (primaryKeys.isEmpty()) {
+                logger.info("No primary keys found, checking unique indices for table: {}", tableName);
+                try (ResultSet indexRs = metaData.getIndexInfo(null, null, tableName, true, false)) {
+                    while (indexRs.next()) {
+                        String columnName = indexRs.getString("COLUMN_NAME");
+                        if (!primaryKeys.contains(columnName.toLowerCase())) {
+                            primaryKeys.add(columnName.toLowerCase());
+                            logger.info("Found unique index column: {}", columnName);
+                        }
+                    }
+                }
             }
-            return combinedDf;
-        } catch (Exception e) {
-            logger.error("Error loading data from {}:{}@{}/{}: {}", username, password, host, dbName, e.getMessage());
-            throw new RuntimeException("Failed to load data: " + e.getMessage(), e);
+
+        } catch (SQLException e) {
+            logger.error("Error identifying primary keys for table {}: {}", tableName, e.getMessage());
+        } finally {
+            closeConnection(conn);
         }
+
+        if (primaryKeys.isEmpty()) {
+            logger.warn("No primary or unique keys found for table: {}. Will try business keys.", tableName);
+        } else {
+            logger.info("Identified key columns for table {}: {}", tableName, primaryKeys);
+        }
+
+        return primaryKeys;
     }
 
     /**
-     * Normalizes column names to lowercase.
+     * Identifies potential business keys based on column properties
      */
-    private Dataset<Row> normalizeColumnNames(Dataset<Row> df) {
-        return df.toDF(Arrays.stream(df.columns())
-                .map(col -> col.toLowerCase().replaceAll("\\s+", "_")) // Replace spaces with underscores
-                .toArray(String[]::new));
-    }
+    private List<String> identifyBusinessKeys(String dbType, String host, int port, String dbName,
+                                            String username, String password, String tableName) {
+        List<String> businessKeys = new ArrayList<>();
+        Connection conn = null;
 
-    private Map<String, Object> normalizeRow(Map<String, Object> row) {
-        return row.entrySet().stream()
-                .collect(Collectors.toMap(
-                        Map.Entry::getKey,
-                        entry -> entry.getValue() != null ? entry.getValue() : "N/A"
-                ));
-    }
+        try {
+            conn = getConnection(dbType, host, port, dbName, username, password);
+            DatabaseMetaData metaData = conn.getMetaData();
 
+            logger.debug("Analyzing columns for business keys in table: {}", tableName);
+
+            // Get column metadata
+            try (ResultSet columns = metaData.getColumns(null, null, tableName, null)) {
+                while (columns.next()) {
+                    String columnName = columns.getString("COLUMN_NAME").toLowerCase();
+                    int nullable = columns.getInt("NULLABLE");
+                    String typeName = columns.getString("TYPE_NAME").toLowerCase();
+
+                    // Check for common business key patterns
+                    if (isBusinessKeyCandidate(columnName, nullable)) {
+                        businessKeys.add(columnName);
+                        logger.info("Identified business key for table {}: {} (Type: {}, Nullable: {})",
+                            tableName, columnName, typeName, nullable == DatabaseMetaData.columnNoNulls ? "NO" : "YES");
+                    }
+                }
+            }
+
+        } catch (SQLException e) {
+            logger.error("Error identifying business keys for table {}: {}", tableName, e.getMessage());
+        } finally {
+            closeConnection(conn);
+        }
+
+        return businessKeys;
+    }
 
     /**
-     * Compares two DataFrames and identifies differences, unmatched records, and identical records.
+     * Checks if a column is a potential business key
      */
-    private Map<String, Object> compareDataframes(Dataset<Row> srcDf, Dataset<Row> tgtDf) {
-        // Register UDFs only once
-        registerUDFs();
+    private boolean isBusinessKeyCandidate(String columnName, int nullable) {
+        // Common patterns for business keys
+        String[] patterns = {
+            "_id$", "id$", "_code$", "_number$", "reference", "email",
+            "^uuid", "^guid", "unique", "key$", "identifier$"
+        };
 
-        // Convert date/timestamp columns to formatted strings
-        Dataset<Row> formattedSrcDf = formatDateColumns(srcDf);
-        Dataset<Row> formattedTgtDf = formatDateColumns(tgtDf);
+        // Check if column name matches any business key pattern
+        boolean matchesPattern = false;
+        for (String pattern : patterns) {
+            if (columnName.matches(".*" + pattern + ".*")) {
+                logger.debug("Column {} matches business key pattern: {}", columnName, pattern);
+                matchesPattern = true;
+                break;
+            }
+        }
 
-        // Get common columns first
-        List<String> commonColumns = Arrays.stream(formattedSrcDf.columns())
-                .filter(col -> Arrays.asList(formattedTgtDf.columns()).contains(col))
-                .collect(Collectors.toList());;
-        logger.info("Common Columns: {}", commonColumns);
+        // Column should match pattern and preferably be NOT NULL
+        boolean isCandidate = matchesPattern && nullable == DatabaseMetaData.columnNoNulls;
+        if (isCandidate) {
+            logger.debug("Column {} is a business key candidate", columnName);
+        }
 
-        // Determine comparison keys
-        List<ColumnMatch> keyColumns = determineComparisonKeys(formattedSrcDf, formattedTgtDf);
+        return isCandidate;
+    }
+
+    /**
+     * Create table mapping with appropriate key columns
+     */
+    private TableMapping createTableMapping(String srcTable, String tgtTable,
+                                           TableMetadata srcMetadata, TableMetadata tgtMetadata,
+                                           String srcDbType, String srcHost, int srcPort, String srcDbName,
+                                           String srcUsername, String srcPassword,
+                                           String tgtDbType, String tgtHost, int tgtPort, String tgtDbName,
+                                           String tgtUsername, String tgtPassword) {
+        TableMapping mapping = new TableMapping(srcTable, tgtTable);
+
+        // Set database connection details
+        mapping.setSourceDbType(srcDbType);
+        mapping.setSourceHost(srcHost);
+        mapping.setSourcePort(srcPort);
+        mapping.setSourceDbName(srcDbName);
+        mapping.setSourceUsername(srcUsername);
+        mapping.setSourcePassword(srcPassword);
+
+        mapping.setTargetDbType(tgtDbType);
+        mapping.setTargetHost(tgtHost);
+        mapping.setTargetPort(tgtPort);
+        mapping.setTargetDbName(tgtDbName);
+        mapping.setTargetUsername(tgtUsername);
+        mapping.setTargetPassword(tgtPassword);
+
+        List<String> keyColumns = new ArrayList<>();
+
+        // First try to detect primary keys
+        List<String> srcPrimaryKeys = identifyPrimaryKeys(srcDbType, srcHost, srcPort, srcDbName, srcUsername, srcPassword, srcTable);
+        List<String> tgtPrimaryKeys = identifyPrimaryKeys(tgtDbType, tgtHost, tgtPort, tgtDbName, tgtUsername, tgtPassword, tgtTable);
+
+        // Use primary keys if available
+        if (!srcPrimaryKeys.isEmpty() && !tgtPrimaryKeys.isEmpty()) {
+            Set<String> commonPrimaryKeys = new HashSet<>();
+            for (String srcPk : srcPrimaryKeys) {
+                for (String tgtPk : tgtPrimaryKeys) {
+                    if (srcPk.equalsIgnoreCase(tgtPk)) {
+                        commonPrimaryKeys.add(srcPk.toLowerCase());
+                    }
+                }
+            }
+            keyColumns.addAll(commonPrimaryKeys);
+            logger.info("Using primary keys for table mapping: {}", keyColumns);
+        }
+
+        // If no common primary keys, try to identify business keys
         if (keyColumns.isEmpty()) {
-            logger.warn("No comparison keys found. Using all common columns.");
-            keyColumns = commonColumns.stream()
-                    .map(col -> new ColumnMatch(col, 0.8, false, false))
-                    .collect(Collectors.toList());
-            logger.warn("No unique comparison keys found. Using all common columns as fallback keys: {}", commonColumns);
+            List<String> srcBusinessKeys = identifyBusinessKeys(srcDbType, srcHost, srcPort, srcDbName, srcUsername, srcPassword, srcTable);
+            List<String> tgtBusinessKeys = identifyBusinessKeys(tgtDbType, tgtHost, tgtPort, tgtDbName, tgtUsername, tgtPassword, tgtTable);
 
+            Set<String> commonBusinessKeys = new HashSet<>();
+            for (String srcKey : srcBusinessKeys) {
+                for (String tgtKey : tgtBusinessKeys) {
+                    if (srcKey.equalsIgnoreCase(tgtKey)) {
+                        commonBusinessKeys.add(srcKey.toLowerCase());
+                    }
+                }
+            }
+
+            if (!commonBusinessKeys.isEmpty()) {
+                keyColumns.addAll(commonBusinessKeys);
+                logger.info("Using business keys for table mapping: {}", keyColumns);
+            }
         }
 
-        // Create join condition and perform join
-        Column joinCondition = createJoinCondition(keyColumns);
-        Dataset<Row> joinedDf = formattedSrcDf.as("src")
-                .join(formattedTgtDf.as("tgt"), joinCondition, "full_outer");
+        // Last resort: use all common columns
+        if (keyColumns.isEmpty()) {
+            keyColumns.addAll(srcMetadata.getAllColumns().stream()
+                    .filter(col -> tgtMetadata.getAllColumns().stream()
+                            .anyMatch(tgtCol -> tgtCol.equalsIgnoreCase(col)))
+                    .map(String::toLowerCase)
+                    .collect(Collectors.toList()));
+            logger.info("Using all common columns as keys for table mapping: {}", keyColumns);
+        }
 
-        // Calculate matches and differences
-        Dataset<Row> exactMatches = findExactMatches(joinedDf, commonColumns.toArray(new String[0]));
-        Dataset<Row> unmatchedSource = findUnmatchedRecords(joinedDf, "src", "tgt");
-        Dataset<Row> unmatchedTarget = findUnmatchedRecords(joinedDf, "tgt", "src");
-        Dataset<Row> differences = calculateDifferences(joinedDf, exactMatches, commonColumns);
+        mapping.setKeyColumns(keyColumns);
+        return mapping;
+    }
 
-        // Convert results to JSON strings with proper handling
+    /**
+     * Main method to compare databases and generate Excel report
+     */
+    public File compareAndGenerateReport(
+            String srcDbType, String tgtDbType,
+            String srcHost, int srcPort, String srcDbName, String srcUsername, String srcPassword,
+            String tgtHost, int tgtPort, String tgtDbName, String tgtUsername, String tgtPassword,
+            String outputPath, List<TableMapping> selectedTables) {
+        try {
+            logger.info("Starting database comparison...");
+            List<TableMapping> tableMappings = new ArrayList<>();
+            if (selectedTables != null && !selectedTables.isEmpty()) {
+                // Filter tables based on the provided mappings
+                tableMappings.addAll(selectedTables);
+
+                // Ensure all table mappings have database connection details
+                for (TableMapping mapping : tableMappings) {
+                    if (mapping.getSourceDbType() == null) {
+                        mapping.setSourceDbType(srcDbType);
+                        mapping.setSourceHost(srcHost);
+                        mapping.setSourcePort(srcPort);
+                        mapping.setSourceDbName(srcDbName);
+                        mapping.setSourceUsername(srcUsername);
+                        mapping.setSourcePassword(srcPassword);
+
+                        mapping.setTargetDbType(tgtDbType);
+                        mapping.setTargetHost(tgtHost);
+                        mapping.setTargetPort(tgtPort);
+                        mapping.setTargetDbName(tgtDbName);
+                        mapping.setTargetUsername(tgtUsername);
+                        mapping.setTargetPassword(tgtPassword);
+                    }
+                }
+            } else {
+                // Find all common tables if no mappings are provided
+                tableMappings = findCommonTables(
+                        srcDbType, tgtDbType,
+                        srcHost, srcPort, srcDbName, srcUsername, srcPassword,
+                        tgtHost, tgtPort, tgtDbName, tgtUsername, tgtPassword);
+            }
+            if (tableMappings.isEmpty()) {
+                logger.warn("No tables found for comparison.");
+                return null;
+            }
+            Map<String, Object> allResults = compareTables(tableMappings);
+            // Generate Excel report
+            File excelFile = excelGenerator.generateExcelReport(allResults, outputPath, tableMappings);
+            logger.info("Excel report generated at: {}", excelFile.getAbsolutePath());
+            return excelFile;
+        } catch (Exception e) {
+            logger.error("Error comparing databases: ", e);
+            throw new RuntimeException("Database comparison failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Compare tables between databases
+     */
+    private Map<String, Object> compareTables(List<TableMapping> tableMappings) {
+        Map<String, Object> allResults = new HashMap<>();
+        List<Map<String, Object>> allDifferences = new ArrayList<>();
+        List<Map<String, Object>> allUnmatchedSource = new ArrayList<>();
+        List<Map<String, Object>> allUnmatchedTarget = new ArrayList<>();
+        int totalExactMatches = 0;
+
+        for (TableMapping mapping : tableMappings) {
+            try {
+                logger.info("Starting comparison for table mapping: {}", mapping);
+
+                // Identify primary keys if not already set
+                if (mapping.getKeyColumns() == null || mapping.getKeyColumns().isEmpty()) {
+                    List<String> primaryKeys = identifyPrimaryKeys(
+                        mapping.getSourceDbType(), mapping.getSourceHost(),
+                        mapping.getSourcePort(), mapping.getSourceDbName(),
+                        mapping.getSourceUsername(), mapping.getSourcePassword(),
+                        mapping.getSourceTable()
+                    );
+
+                    if (!primaryKeys.isEmpty()) {
+                        mapping.setKeyColumns(primaryKeys);
+                        logger.info("Using identified primary keys for comparison: {}", primaryKeys);
+                    } else {
+                        logger.warn("No primary keys identified for table {}. Attempting to use business keys.",
+                            mapping.getSourceTable());
+                        List<String> businessKeys = identifyBusinessKeys(
+                            mapping.getSourceDbType(), mapping.getSourceHost(),
+                            mapping.getSourcePort(), mapping.getSourceDbName(),
+                            mapping.getSourceUsername(), mapping.getSourcePassword(),
+                            mapping.getSourceTable()
+                        );
+
+                        if (!businessKeys.isEmpty()) {
+                            mapping.setKeyColumns(businessKeys);
+                            logger.info("Using identified business keys for comparison: {}", businessKeys);
+                        } else {
+                            logger.error("No keys found for table {}. Comparison may be inaccurate.",
+                                mapping.getSourceTable());
+                        }
+                    }
+                }
+
+                // Get data from both databases
+                List<Map<String, Object>> sourceData = getTableData(
+                    mapping.getSourceDbType(), mapping.getSourceHost(),
+                    mapping.getSourcePort(), mapping.getSourceDbName(),
+                    mapping.getSourceUsername(), mapping.getSourcePassword(),
+                    mapping.getSourceTable()
+                );
+
+                List<Map<String, Object>> targetData = getTableData(
+                    mapping.getTargetDbType(), mapping.getTargetHost(),
+                    mapping.getTargetPort(), mapping.getTargetDbName(),
+                    mapping.getTargetUsername(), mapping.getTargetPassword(),
+                    mapping.getTargetTable()
+                );
+
+                logger.info("Retrieved {} records from source and {} records from target for table {}",
+                    sourceData.size(), targetData.size(), mapping.getSourceTable());
+
+                // Compare the data using the identified keys
+                Map<String, Object> comparisonResult = compareTableData(sourceData, targetData, mapping);
+
+                // Aggregate results
+                allDifferences.addAll((List<Map<String, Object>>) comparisonResult.get("differences"));
+                allUnmatchedSource.addAll((List<Map<String, Object>>) comparisonResult.get("unmatched_source"));
+                allUnmatchedTarget.addAll((List<Map<String, Object>>) comparisonResult.get("unmatched_target"));
+                totalExactMatches += (Integer) comparisonResult.get("exact_matches");
+
+            } catch (Exception e) {
+                logger.error("Error comparing table {}: {}", mapping.getSourceTable(), e.getMessage());
+            }
+        }
+
+        allResults.put("differences", allDifferences);
+        allResults.put("unmatched_source", allUnmatchedSource);
+        allResults.put("unmatched_target", allUnmatchedTarget);
+        allResults.put("exact_matches", totalExactMatches);
+
+        return allResults;
+    }
+
+    /**
+     * Compares data between source and target tables using identified keys
+     */
+    private Map<String, Object> compareTableData(List<Map<String, Object>> sourceData,
+                                               List<Map<String, Object>> targetData,
+                                               TableMapping mapping) {
         Map<String, Object> results = new HashMap<>();
-        results.put("identical", convertToJsonList(exactMatches));
-        results.put("unmatched_source", convertToJsonList(unmatchedSource));
-        results.put("unmatched_target", convertToJsonList(unmatchedTarget));
-        results.put("differences", convertToJsonList(differences));
+        List<Map<String, Object>> differences = new ArrayList<>();
+        List<Map<String, Object>> unmatchedSource = new ArrayList<>();
+        List<Map<String, Object>> unmatchedTarget = new ArrayList<>();
+        int exactMatches = 0;
+
+        // Create maps for faster lookup using composite keys
+        Map<String, Map<String, Object>> sourceMap = new HashMap<>();
+        Map<String, Map<String, Object>> targetMap = new HashMap<>();
+
+        logger.info("Using key columns for comparison: {}", mapping.getKeyColumns());
+
+        // Build composite keys from all key columns
+        for (Map<String, Object> record : sourceData) {
+            String compositeKey = buildCompositeKey(record, mapping.getKeyColumns());
+            if (compositeKey != null) {
+                sourceMap.put(compositeKey, record);
+                logger.debug("Source record key: {}", compositeKey);
+            } else {
+                logger.warn("Could not build composite key for source record: {}", record);
+            }
+        }
+
+        for (Map<String, Object> record : targetData) {
+            String compositeKey = buildCompositeKey(record, mapping.getKeyColumns());
+            if (compositeKey != null) {
+                targetMap.put(compositeKey, record);
+                logger.debug("Target record key: {}", compositeKey);
+            } else {
+                logger.warn("Could not build composite key for target record: {}", record);
+            }
+        }
+
+        // Compare records
+        for (Map.Entry<String, Map<String, Object>> entry : sourceMap.entrySet()) {
+            String key = entry.getKey();
+            Map<String, Object> sourceRecord = entry.getValue();
+            Map<String, Object> targetRecord = targetMap.get(key);
+
+            if (targetRecord != null) {
+                // Compare fields
+                Map<String, Object> comparison = compareRecordFields(sourceRecord, targetRecord);
+                List<Map<String, String>> fieldDifferences = (List<Map<String, String>>) comparison.get("differences");
+
+                if (!fieldDifferences.isEmpty()) {
+                    Map<String, Object> diffRecord = new HashMap<>();
+                    diffRecord.put("table", mapping.getSourceTable());
+                    diffRecord.put("key", key);
+                    diffRecord.put("source_record", sourceRecord);
+                    diffRecord.put("target_record", targetRecord);
+                    diffRecord.put("differences", fieldDifferences);
+                    differences.add(diffRecord);
+                    logger.debug("Found differences for key {}: {}", key, fieldDifferences);
+                } else {
+                    exactMatches++;
+                    logger.debug("Exact match found for key: {}", key);
+                }
+                targetMap.remove(key);
+            } else {
+                // Record exists in source but not in target
+                unmatchedSource.add(sourceRecord);
+                logger.debug("Record with key {} exists in source but not in target", key);
+            }
+        }
+
+        // Remaining records in target are unmatched
+        unmatchedTarget.addAll(targetMap.values());
+        if (!targetMap.isEmpty()) {
+            logger.debug("Found {} records in target that don't exist in source", targetMap.size());
+        }
+
+        results.put("differences", differences);
+        results.put("unmatched_source", unmatchedSource);
+        results.put("unmatched_target", unmatchedTarget);
+        results.put("exact_matches", exactMatches);
+
+        logger.info("Comparison results for table {}: {} differences, {} unmatched in source, {} unmatched in target, {} exact matches",
+            mapping.getSourceTable(), differences.size(), unmatchedSource.size(), unmatchedTarget.size(), exactMatches);
 
         return results;
     }
 
-    private void registerUDFs() {
-        // DateTime formatter UDF
-        sparkSession.udf().register("formatDateTime", (Object value) -> {
-            if (value == null) {
-                return null;
-            }
-            try {
-                if (value instanceof java.sql.Date) {
-                    return new SimpleDateFormat("yyyy-MM-dd").format(value);
-                }
-                if (value instanceof java.sql.Timestamp) {
-                    return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(value);
-                }
-                return String.valueOf(value);
-            } catch (Exception e) {
-                logger.warn("Error formatting datetime value: {}", value, e);
-                return String.valueOf(value);
-            }
-        }, DataTypes.StringType);
+    /**
+     * Compares individual fields between two records
+     */
+    private Map<String, Object> compareRecordFields(Map<String, Object> sourceRecord, Map<String, Object> targetRecord) {
+        Map<String, Object> result = new HashMap<>();
+        List<Map<String, String>> differences = new ArrayList<>();
 
-        // Levenshtein UDF
-        sparkSession.udf().register("levenshtein",
-                (String s1, String s2) -> {
-                    if (s1 == null || s2 == null) {
-                        return null;
-                    }
-                    return org.apache.commons.text.similarity.LevenshteinDistance
-                            .getDefaultInstance()
-                            .apply(s1, s2);
-                },
-                DataTypes.IntegerType);
+        // Compare all fields in source record
+        for (Map.Entry<String, Object> entry : sourceRecord.entrySet()) {
+            String field = entry.getKey();
+            Object sourceValue = entry.getValue();
+            Object targetValue = targetRecord.get(field);
 
-        // Hash value UDF
-        sparkSession.udf().register("hashValue",
-                (String value) -> value != null ? Integer.toHexString(value.hashCode()) : null,
-                DataTypes.StringType);
-    }
-
-    private Dataset<Row> formatDateColumns(Dataset<Row> df) {
-        Dataset<Row> result = df;
-        for (String column : df.columns()) {
-            try {
-                if (df.schema().apply(column).dataType() instanceof org.apache.spark.sql.types.DateType
-                        || df.schema().apply(column).dataType() instanceof org.apache.spark.sql.types.TimestampType) {
-                    result = result.withColumn(column,
-                            functions.callUDF("formatDateTime", result.col(column)));
-                }
-            } catch (Exception e) {
-                logger.warn("Error formatting column {}: {}", column, e.getMessage());
+            if (!Objects.equals(sourceValue, targetValue)) {
+                Map<String, String> difference = new HashMap<>();
+                difference.put("field", field);
+                difference.put("source", sourceValue != null ? sourceValue.toString() : "<NULL>");
+                difference.put("target", targetValue != null ? targetValue.toString() : "<NULL>");
+                differences.add(difference);
             }
         }
+
+        // Check for fields only in target
+        for (String field : targetRecord.keySet()) {
+            if (!sourceRecord.containsKey(field)) {
+                Object targetValue = targetRecord.get(field);
+                Map<String, String> difference = new HashMap<>();
+                difference.put("field", field);
+                difference.put("source", "<NULL>");
+                difference.put("target", targetValue != null ? targetValue.toString() : "<NULL>");
+                differences.add(difference);
+            }
+        }
+
+        result.put("differences", differences);
         return result;
     }
 
-    private List<String> convertToJsonList(Dataset<Row> df) {
-        try {
-            return df.select(functions.to_json(functions.struct("*")).as("data"))
-                    .collectAsList()
-                    .stream()
-                    .map(row -> row.getString(0))
-                    .filter(Objects::nonNull)
-                    .collect(Collectors.toList());
-        } catch (Exception e) {
-            logger.error("Error converting dataset to JSON list: {}", e.getMessage(), e);
-            return new ArrayList<>();
-        }
-    }
-
     /**
-     * Represents a column match with metadata.
+     * Builds a composite key from multiple columns
      */
-    private static class ColumnMatch {
-        String name;
-        double similarityThreshold;
-        boolean isPrimaryKey;
-        boolean isUnique;
-
-        ColumnMatch(String name, double similarityThreshold, boolean isPrimaryKey, boolean isUnique) {
-            this.name = name;
-            this.similarityThreshold = similarityThreshold;
-            this.isPrimaryKey = isPrimaryKey;
-            this.isUnique = isUnique;
+    private String buildCompositeKey(Map<String, Object> record, List<String> keyColumns) {
+        if (keyColumns == null || keyColumns.isEmpty() || record == null) {
+            return null;
         }
 
-        public boolean isUnique() {
-            return isUnique;
-        }
-    }
-
-    /**
-     * Determines comparison keys based on column patterns and uniqueness.
-     */
-    private List<ColumnMatch> determineComparisonKeys(Dataset<Row> srcDf, Dataset<Row> tgtDf) {
-        List<ColumnMatch> keyColumns = new ArrayList<>();
-        Set<String> keyPatterns = Set.of("id", "code", "email", "phone", "transaction_id");
-
-        List<String> commonColumns = Arrays.stream(srcDf.columns())
-                .filter(col -> Arrays.asList(tgtDf.columns()).contains(col))
-                .filter(col -> !isTechnicalColumn(col))
-                .collect(Collectors.toList());
-
-        for (String col : commonColumns) {
-            String colLower = col.toLowerCase();
-            if (keyPatterns.stream().anyMatch(colLower::contains)) {
-                double threshold = colLower.contains("id") ? 1.0 : 0.9;
-                boolean isUnique = isColumnUnique(srcDf, col);
-                keyColumns.add(new ColumnMatch(col, threshold, false, isUnique));
+        StringBuilder key = new StringBuilder();
+        for (String column : keyColumns) {
+            Object value = record.get(column);
+            if (value != null) {
+                if (key.length() > 0) {
+                    key.append(":");
+                }
+                key.append(value.toString());
             }
         }
 
-        // Fallback: Use composite keys if no unique keys are found
-        if (keyColumns.isEmpty()) {
-            keyColumns = commonColumns.stream()
-                    .map(col -> new ColumnMatch(col, 0.8, false, false))
-                    .collect(Collectors.toList());
-            logger.warn("No unique comparison keys found. Using all common columns as fallback keys: {}", commonColumns);
+        return key.length() > 0 ? key.toString() : null;
+    }
+
+    /**
+     * Load data from a specific table
+     */
+    private Dataset<Row> loadTableData(String dbType, String host, int port,
+                                       String dbName, String username, String password,
+                                       String tableName, boolean isSource) {
+        String jdbcUrl = getJdbcUrl(dbType, host, port, dbName);
+        Properties connectionProperties = new Properties();
+        connectionProperties.put("user", username);
+        connectionProperties.put("password", password);
+        connectionProperties.put("driver", getDriverClass(dbType));
+
+        logger.info("Loading data from table: {} ({} database)", tableName, isSource ? "source" : "target");
+        logger.debug("JDBC URL: {}", jdbcUrl);
+        logger.debug("Connection properties: user={}, driver={}", username, getDriverClass(dbType));
+
+        try {
+            Dataset<Row> tableDf = sparkSession.read()
+                    .jdbc(jdbcUrl, tableName, connectionProperties);
+
+            logger.debug("Table {} loaded with {} columns: {}",
+                    tableName, tableDf.columns().length, Arrays.asList(tableDf.columns()));
+
+            // Add source/target prefix to column names
+            String prefix = isSource ? "src_" : "tgt_";
+            for (String colName : tableDf.columns()) {
+                tableDf = tableDf.withColumnRenamed(colName, prefix + colName.toLowerCase());
+            }
+
+            logger.debug("After renaming, columns: {}", Arrays.asList(tableDf.columns()));
+
+            // Add table name column
+            tableDf = tableDf.withColumn("table_name", functions.lit(tableName));
+
+            // Sample the data to verify it's loaded correctly
+            if (tableDf.count() > 0) {
+                logger.debug("Sample data from table {}: {}", tableName,
+                        tableDf.limit(1).collectAsList().get(0).toString());
+            } else {
+                logger.warn("Table {} is empty", tableName);
+            }
+
+            return tableDf;
+        } catch (Exception e) {
+            logger.error("Error loading table {}: {}", tableName, e.getMessage(), e);
+            throw new RuntimeException("Failed to load table: " + tableName, e);
         }
-
-        return keyColumns;
     }
 
     /**
-     * Checks if a column is a technical column (e.g., id, created_at).
+     * Get JDBC URL dynamically from configuration
      */
-    private boolean isTechnicalColumn(String columnName) {
-        Set<String> technicalColumns = Set.of("id", "created_at", "updated_at", "modified_at", "timestamp", "uuid");
-        return technicalColumns.stream().anyMatch(techCol -> columnName.toLowerCase().contains(techCol));
-    }
-
-    /**
-     * Checks if a column is unique in the dataset.
-     */
-    private boolean isColumnUnique(Dataset<Row> df, String column) {
-        long totalCount = df.count();
-        long distinctCount = df.select(column).distinct().count();
-        return distinctCount >= totalCount * 0.9;
-    }
-
-    /**
-     * Creates a join condition based on comparison keys.
-     */
-    private Column createJoinCondition(List<ColumnMatch> keyColumns) {
-        if (keyColumns.isEmpty()) {
-            return functions.lit(true);  // Fallback to cartesian join if no keys found
-        }
-        return keyColumns.stream()
-                .map(key -> {
-                    if (isNumericColumn(key.name)) {
-                        return createFuzzyNumericMatchCondition(key.name, key.similarityThreshold);
-                    } else if (key.name.equalsIgnoreCase("card_number")) {
-                        return functions.col("src." + key.name).equalTo(functions.col("tgt." + key.name));
-                    } else {
-                        return createHashMatchCondition(key.name);
-                    }
-                })
-                .reduce(Column::and)
-                .orElse(functions.lit(true));
-    }
-
-    /**
-     * Checks if a column is numeric.
-     */
-    private boolean isNumericColumn(String columnName) {
-        return columnName.toLowerCase().contains("amount") || columnName.toLowerCase().contains("price");
-    }
-
-    /**
-     * Creates a fuzzy match condition for numeric columns.
-     */
-    private Column createFuzzyNumericMatchCondition(String srcCol, double threshold) {
-        return functions.abs(
-                functions.col("src." + srcCol).minus(functions.col("tgt." + srcCol))
-        ).divide(
-                functions.greatest(
-                        functions.abs(functions.col("src." + srcCol)),
-                        functions.abs(functions.col("tgt." + srcCol))
-                )
-        ).lt(threshold);
-    }
-
-    /**
-     * Creates a hash-based match condition for important fields.
-     */
-    private Column createHashMatchCondition(String srcCol) {
-        return functions.callUDF("hashValue", functions.col("src." + srcCol))
-                .equalTo(functions.callUDF("hashValue", functions.col("tgt." + srcCol)));
-    }
-
-    /**
-     * Converts all column values to lowercase for case-insensitive comparison.
-     */
-    private Dataset<Row> convertToLowercase(Dataset<Row> df) {
-        return df.select(Arrays.stream(df.columns())
-                .map(col -> functions.lower(functions.col(col)).as(col))
-                .toArray(Column[]::new));
-    }
-
-    /**
-     * Finds exact matches between source and target DataFrames.
-     */
-    private Dataset<Row> findExactMatches(Dataset<Row> joinedDf, String[] columns) {
-        // Create exact match condition for all columns
-        Column matchCondition = Arrays.stream(columns)
-                .map(col -> functions.col("src." + col).equalTo(functions.col("tgt." + col))
-                        .or(functions.col("src." + col).isNull()
-                                .and(functions.col("tgt." + col).isNull())))
-                .reduce(Column::and)
-                .orElse(functions.lit(true));
-
-        // Add conditions to exclude nulls on both sides
-        Column notAllNullCondition = Arrays.stream(columns)
-                .map(col -> functions.col("src." + col).isNotNull()
-                        .or(functions.col("tgt." + col).isNotNull()))
-                .reduce(Column::or)
-                .orElse(functions.lit(true));
-
-        return joinedDf.filter(matchCondition.and(notAllNullCondition));
-    }
-
-    /**
-     * Finds similar records based on fuzzy matching.
-     */
-    private Dataset<Row> findSimilarRecords(Dataset<Row> joinedDf, Dataset<Row> exactMatches, Column joinCondition) {
-        return joinedDf.filter(joinCondition)
-                .except(exactMatches);
-    }
-
-    /**
-     * Finds unmatched records in one DataFrame compared to another.
-     */
-    private Dataset<Row> findUnmatchedRecords(Dataset<Row> joinedDf, String source, String target) {
-        return joinedDf
-                .filter(functions.col(target + "." + joinedDf.columns()[0]).isNull())
-                .withColumn("reason", functions.lit("unmatched"))
-                .select(functions.col(source + ".*"), functions.col("reason"));
-    }
-
-    /**
-     * Calculates differences between source and target DataFrames.
-     */
-    private Dataset<Row> calculateDifferences(Dataset<Row> joinedDf, Dataset<Row> exactMatches, List<String> columns) {
-        Dataset<Row> diffRecords = joinedDf.except(exactMatches);
-
-        List<Column> diffColumns = new ArrayList<>();
-        for (String col : columns) {
-            diffColumns.add(functions.col("src." + col).as("src_" + col));
-            diffColumns.add(functions.col("tgt." + col).as("tgt_" + col));
-            diffColumns.add(functions.when(
-                    functions.col("src." + col).isNull().or(functions.col("tgt." + col).isNull()),
-                    "missing"
-            ).when(
-                    functions.col("src." + col).notEqual(functions.col("tgt." + col)),
-                    "different"
-            ).otherwise("match").as("status_" + col));
-        }
-
-        Column mismatchCount = columns.stream()
-                .map(col -> functions.when(functions.col("status_" + col).notEqual("match"), 1).otherwise(0))
-                .reduce(Column::plus)
-                .orElse(functions.lit(0));
-
-        Column potentialMatchFlag = mismatchCount.leq(2);
-        Column manualReviewFlag = mismatchCount.gt(2).and(mismatchCount.leq(5));
-
-        return diffRecords.select(Stream.concat(diffColumns.stream(), Stream.of(
-                        mismatchCount.as("mismatch_count"),
-                        potentialMatchFlag.as("potential_match"),
-                        manualReviewFlag.as("manual_review")
-                )).toArray(Column[]::new))
-                .where(potentialMatchFlag.or(manualReviewFlag));
-    }
-
     private String getJdbcUrl(String dbType, String host, int port, String dbName) {
-        switch (dbType.toLowerCase()) {
-            case "mysql":
-                return String.format("jdbc:mysql://%s:%d/%s", host, port, dbName);
-            case "postgresql":
-                return String.format("jdbc:postgresql://%s:%d/%s", host, port, dbName);
-            case "sqlserver":
-                return String.format("jdbc:sqlserver://%s:%d;databaseName=%s", host, port, dbName);
-            case "oracle":
-                return String.format("jdbc:oracle:thin:@//%s:%d/%s", host, port, dbName);
-            default:
-                throw new IllegalArgumentException("Unsupported database type: " + dbType);
+        logger.debug("Getting JDBC URL for dbType: {}, host: {}, port: {}, dbName: {}", dbType, host, port, dbName);
+
+        if (dbType == null || dbType.trim().isEmpty()) {
+            logger.error("Database type is null or empty");
+            throw new IllegalArgumentException("Database type cannot be null or empty");
+        }
+
+        if (host == null || host.trim().isEmpty()) {
+            logger.error("Host is null or empty");
+            throw new IllegalArgumentException("Host cannot be null or empty");
+        }
+
+        if (dbName == null || dbName.trim().isEmpty()) {
+            logger.error("Database name is null or empty");
+            throw new IllegalArgumentException("Database name cannot be null or empty");
+        }
+
+        if (databaseConfig == null) {
+            logger.error("DatabaseConfig is null");
+            throw new IllegalStateException("DatabaseConfig is null. Check your Spring configuration.");
+        }
+
+        if (databaseConfig.getJdbcUrl() == null) {
+            logger.error("databaseConfig.getJdbcUrl() is null");
+            throw new IllegalStateException("JDBC URL configuration is null. Check your application.properties file.");
+        }
+
+        if (databaseConfig.getJdbcUrl().isEmpty()) {
+            logger.error("databaseConfig.getJdbcUrl() is empty");
+            throw new IllegalStateException("JDBC URL configuration is empty. Check your application.properties file.");
+        }
+
+        logger.debug("Available JDBC URL keys: {}", databaseConfig.getJdbcUrl().keySet());
+
+        String dbTypeLower = dbType.toLowerCase();
+        logger.debug("Looking for JDBC URL with key: {}", dbTypeLower);
+
+        String baseJdbcUrl = databaseConfig.getJdbcUrl().get(dbTypeLower);
+
+        if (baseJdbcUrl == null) {
+            // Try with original case
+            logger.debug("Not found with lowercase, trying with original case: {}", dbType);
+            baseJdbcUrl = databaseConfig.getJdbcUrl().get(dbType);
+
+            if (baseJdbcUrl == null) {
+                logger.error("No JDBC URL found for database type: {}", dbType);
+                throw new IllegalArgumentException("Unsupported database type: " + dbType +
+                    ". Available types: " + String.join(", ", databaseConfig.getJdbcUrl().keySet()));
+            }
+        }
+
+        logger.info("Using JDBC URL for {}: {}", dbType, baseJdbcUrl);
+        return baseJdbcUrl + host + ":" + port + "/" + dbName;
+    }
+
+    /**
+     * Get JDBC driver class dynamically from configuration
+     */
+    private String getDriverClass(String dbType) {
+        String driverClass = databaseConfig.getDriver().get(dbType.toLowerCase());
+        if (driverClass == null) {
+            throw new IllegalArgumentException("Unsupported database type: " + dbType);
+        }
+        return driverClass;
+    }
+
+    /**
+     * Get a database connection using JDBC URL
+     */
+    private Connection getConnection(String jdbcUrl, String username, String password) throws SQLException {
+        try {
+            // Load the driver class dynamically based on the JDBC URL
+            String driverClass = null;
+            if (jdbcUrl.contains("mysql")) {
+                driverClass = "com.mysql.cj.jdbc.Driver";
+            } else if (jdbcUrl.contains("postgresql")) {
+                driverClass = "org.postgresql.Driver";
+            } else if (jdbcUrl.contains("sqlserver")) {
+                driverClass = "com.microsoft.sqlserver.jdbc.SQLServerDriver";
+            } else if (jdbcUrl.contains("oracle")) {
+                driverClass = "oracle.jdbc.OracleDriver";
+            }
+
+            if (driverClass != null) {
+                Class.forName(driverClass);
+            }
+
+            return DriverManager.getConnection(jdbcUrl, username, password);
+        } catch (ClassNotFoundException e) {
+            logger.error("Database driver not found: {}", e.getMessage());
+            throw new SQLException("Database driver not found", e);
         }
     }
 
-    private String getDriverClass(String dbType) {
-        switch (dbType.toLowerCase()) {
-            case "mysql":
-                return "com.mysql.cj.jdbc.Driver";
-            case "postgresql":
-                return "org.postgresql.Driver";
-            case "sqlserver":
-                return "com.microsoft.sqlserver.jdbc.SQLServerDriver";
-            case "oracle":
-                return "oracle.jdbc.driver.OracleDriver";
-            default:
-                throw new IllegalArgumentException("Unsupported database type: " + dbType);
+    /**
+     * Get a database connection using individual connection parameters
+     */
+    private Connection getConnection(String dbType, String host, int port, String dbName,
+                                   String username, String password) throws SQLException {
+        String jdbcUrl = getJdbcUrl(dbType, host, port, dbName);
+        return getConnection(jdbcUrl, username, password);
+    }
+
+    /**
+     * Close a database connection safely
+     */
+    private void closeConnection(Connection conn) {
+        if (conn != null) {
+            try {
+                conn.close();
+                logger.debug("Database connection closed successfully");
+            } catch (SQLException e) {
+                logger.warn("Error closing database connection: {}", e.getMessage());
+            }
         }
+    }
+
+    /**
+     * Get table data as a list of maps
+     */
+    private List<Map<String, Object>> getTableData(String dbType, String host, int port,
+                                                  String dbName, String username, String password,
+                                                  String tableName) {
+        List<Map<String, Object>> data = new ArrayList<>();
+        Connection conn = null;
+        try {
+            conn = getConnection(dbType, host, port, dbName, username, password);
+            try (Statement stmt = conn.createStatement();
+                 ResultSet rs = stmt.executeQuery("SELECT * FROM " + tableName)) {
+
+                ResultSetMetaData metaData = rs.getMetaData();
+                int columnCount = metaData.getColumnCount();
+
+                while (rs.next()) {
+                    Map<String, Object> row = new HashMap<>();
+                    for (int i = 1; i <= columnCount; i++) {
+                        String columnName = metaData.getColumnName(i).toLowerCase();
+                        Object value = rs.getObject(i);
+                        row.put(columnName, value);
+                    }
+                    data.add(row);
+                }
+            }
+        } catch (SQLException e) {
+            logger.error("Error fetching data from table {}: {}", tableName, e.getMessage());
+            throw new RuntimeException("Failed to fetch table data", e);
+        } finally {
+            closeConnection(conn);
+        }
+        return data;
     }
 }

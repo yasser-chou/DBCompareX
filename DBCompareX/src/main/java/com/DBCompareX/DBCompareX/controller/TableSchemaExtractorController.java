@@ -1,164 +1,238 @@
 package com.DBCompareX.DBCompareX.controller;
 
 import com.DBCompareX.DBCompareX.dao.entities.ComparisonRequest;
-import com.DBCompareX.DBCompareX.dao.entities.DatabaseConnector;
-import com.DBCompareX.DBCompareX.dao.entities.ExcelGenerator;
+import com.DBCompareX.DBCompareX.dao.entities.TableMapping;
 import com.DBCompareX.DBCompareX.service.TableSchemaExtractor;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
-import javax.servlet.http.HttpServletResponse;
+
+import javax.validation.Valid;
 import java.io.File;
-import java.io.IOException;
-import java.nio.file.Files;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @RestController
-@RequestMapping("/api/schema")
+@RequestMapping("/api/compare")
 public class TableSchemaExtractorController {
-
-     private static final Logger logger = LoggerFactory.getLogger(TableSchemaExtractorController.class);
+    private static final Logger logger = LoggerFactory.getLogger(TableSchemaExtractorController.class);
     private final TableSchemaExtractor tableSchemaExtractor;
-    private final DatabaseConnector databaseConnector;
+
+    // Constants for response messages
+    private static final String STATUS_SUCCESS = "success";
+    private static final String STATUS_ERROR = "error";
+    private static final String DEFAULT_REPORT_NAME = "database_comparison_report.xlsx";
 
     @Autowired
-    public TableSchemaExtractorController(TableSchemaExtractor tableSchemaExtractor, DatabaseConnector databaseConnector) {
+    public TableSchemaExtractorController(TableSchemaExtractor tableSchemaExtractor) {
         this.tableSchemaExtractor = tableSchemaExtractor;
-        this.databaseConnector = databaseConnector;
     }
 
     /**
-     * Fetch all tables from a specific database.
+     * Compare all tables between two databases and generate a report
      */
-//    @GetMapping("/tables")
-//    public ResponseEntity<List<String>> getAllTables(
-//            @RequestParam String dbType,
-//            @RequestParam String host,
-//            @RequestParam int port,
-//            @RequestParam String dbName,
-//            @RequestParam String username,
-//            @RequestParam String password) {
-//
+//    @Operation(summary = "Compare all tables between two databases",
+//            description = "Compares all tables between two databases and generates an Excel report containing differences.")
+//    @ApiResponse(responseCode = "200", description = "Comparison successful, report generated")
+//    @ApiResponse(responseCode = "400", description = "Invalid input or failed to generate report")
+//    @ApiResponse(responseCode = "500", description = "Internal server error during comparison")
+//    @PostMapping("/databases")
+//    public ResponseEntity<?> compareDatabases(@Valid @RequestBody ComparisonRequest request) {
 //        try {
-//            List<String> tables = tableSchemaExtractor.getAllTables(dbType, host, port, dbName, username, password);
-//            return ResponseEntity.ok(tables);
+//            // Validate database type
+//            String sourceDbType = request.getSourceDbType();
+//            String targetDbType = request.getTargetDbType();
+//
+//            if (sourceDbType == null || sourceDbType.trim().isEmpty()) {
+//                return ResponseEntity.badRequest()
+//                    .body(createErrorResponse("Source database type cannot be empty"));
+//            }
+//
+//            if (targetDbType == null || targetDbType.trim().isEmpty()) {
+//                return ResponseEntity.badRequest()
+//                    .body(createErrorResponse("Target database type cannot be empty"));
+//            }
+//
+//            String outputPath = generateOutputPath(DEFAULT_REPORT_NAME);
+//            File excelFile = tableSchemaExtractor.compareAndGenerateReport(
+//                    request.getSourceDbType(), request.getTargetDbType(),
+//                    request.getSourceHost(), request.getSourcePort(), request.getSourceDbName(),
+//                    request.getSourceUsername(), request.getSourcePassword(),
+//                    request.getTargetHost(), request.getTargetPort(), request.getTargetDbName(),
+//                    request.getTargetUsername(), request.getTargetPassword(),
+//                    outputPath);
+//            return handleFileResponse(excelFile, "Database comparison completed successfully");
 //        } catch (Exception e) {
-//            return ResponseEntity.internalServerError().body(Collections.emptyList());
+//            logger.error("Error comparing databases: ", e);
+//            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+//                    .body(createErrorResponse("Error: " + e.getMessage()));
 //        }
 //    }
 
     /**
-     * Fetch paginated data from a specific table in a database.
+     * Download the generated report
      */
-//    @GetMapping("/data")
-//    public ResponseEntity<List<Map<String, Object>>> getTableData(
-//            @RequestParam String dbType,
-//            @RequestParam String host,
-//            @RequestParam int port,
-//            @RequestParam String dbName,
-//            @RequestParam String username,
-//            @RequestParam String password,
-//            @RequestParam String tableName,
-//            @RequestParam(defaultValue = "100") int limit,
-//            @RequestParam(defaultValue = "0") int offset) {
-//
-//        try {
-//            List<Map<String, Object>> data = tableSchemaExtractor.getTableData(
-//                    dbType, host, port, dbName, username, password, tableName, limit, offset);
-//            return ResponseEntity.ok(data);
-//        } catch (Exception e) {
-//            return ResponseEntity.internalServerError().body(Collections.emptyList());
-//        }
-//    }
-
-    /**
-     * Fetch data from both source and target databases for comparison.
-     */
-
-    @PostMapping("/tables")
-    public ResponseEntity<?> compareTables(@RequestBody ComparisonRequest request) {
+    @Operation(summary = "Download the generated report",
+            description = "Downloads the Excel report generated from database comparison.")
+    @ApiResponse(responseCode = "200", description = "File downloaded successfully")
+    @ApiResponse(responseCode = "404", description = "File not found")
+    @ApiResponse(responseCode = "500", description = "Internal server error during download")
+    @GetMapping("/download")
+    public ResponseEntity<Resource> downloadReport(@RequestParam String filePath) {
+        File file = null;
+        FileSystemResource resource = null;
+        
         try {
-            logger.info("Received comparison request for tables: {}", request.getTableMappings());
+            file = new File(filePath);
+            if (!file.exists() || !file.isFile()) {
+                logger.warn("File not found or invalid: {}", filePath);
+                return ResponseEntity.notFound().build();
+            }
 
-            Map<String, Object> results = tableSchemaExtractor.fetchDataFromBothDatabases(
-                    request.getSourceDbType(),
-                    request.getTargetDbType(),
-                    request.getSourceHost(),
-                    request.getSourcePort(),
-                    request.getSourceDbName(),
-                    request.getSourceUsername(),
-                    request.getSourcePassword(),
-                    request.getTargetHost(),
-                    request.getTargetPort(),
-                    request.getTargetDbName(),
-                    request.getTargetUsername(),
-                    request.getTargetPassword(),
-                    request.getTableMappings()
-            );
+            // Try to get exclusive access to the file
+            if (!file.renameTo(file)) {
+                logger.warn("File is locked by another process: {}", filePath);
+                return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(null);
+            }
 
-            return ResponseEntity.ok(results);
-
+            resource = new FileSystemResource(file);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, 
+                           "attachment; filename=\"" + file.getName() + "\"")
+                    .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                    .contentLength(file.length())
+                    .body(resource);
         } catch (Exception e) {
-            logger.error("Error during table comparison: ", e);
-            return ResponseEntity.badRequest()
-                    .body(Map.of("error", e.getMessage()));
+            logger.error("Error downloading report: {}", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        } finally {
+            // Clean up the file after serving
+            if (file != null) {
+                try {
+                    boolean deleted = file.delete();
+                    if (!deleted) {
+                        // Schedule deletion for when the JVM exits
+                        file.deleteOnExit();
+                        logger.warn("Could not delete file immediately, scheduled for deletion on JVM exit: {}", filePath);
+                    }
+                } catch (Exception e) {
+                    logger.error("Error deleting file: {}", e.getMessage());
+                    // Schedule deletion for when the JVM exits
+                    file.deleteOnExit();
+                }
+            }
         }
     }
 
-    @PostMapping("/tables/download")
-    public ResponseEntity<Resource> compareAndDownloadExcel(@RequestBody ComparisonRequest request) {
-        File file = null;
+    /**
+     * Compare selected tables between two databases and generate a report
+     */
+    @Operation(summary = "Compare selected tables",
+            description = "Compares selected tables between two databases and generates a report.")
+    @ApiResponse(responseCode = "200", description = "Comparison successful, report generated")
+    @ApiResponse(responseCode = "400", description = "Invalid input or no tables selected")
+    @ApiResponse(responseCode = "500", description = "Internal server error during comparison")
+    @PostMapping("/compare-selected-tables")
+    public ResponseEntity<?> compareSelectedTables(@Valid @RequestBody ComparisonRequest request) {
         try {
-            logger.info("Received comparison request with Excel download for tables: {}", request.getTableMappings());
-            
-            // Generate a unique filename for the Excel report
-            String filename = "comparison_report_" + UUID.randomUUID().toString() + ".xlsx";
-            String outputPath = System.getProperty("java.io.tmpdir") + File.separator + filename;
-            
-            // Perform the comparison
-            Map<String, Object> comparisonResults = tableSchemaExtractor.fetchDataFromBothDatabases(
-                    request.getSourceDbType(),
-                    request.getTargetDbType(),
-                    request.getSourceHost(),
-                    request.getSourcePort(),
-                    request.getSourceDbName(),
-                    request.getSourceUsername(),
-                    request.getSourcePassword(),
-                    request.getTargetHost(),
-                    request.getTargetPort(),
-                    request.getTargetDbName(),
-                    request.getTargetUsername(),
-                    request.getTargetPassword(),
-                    request.getTableMappings()
-            );
-            
-            // Generate the Excel report
-            String excelPath = tableSchemaExtractor.generateExcelReport(comparisonResults, outputPath);
-            
-            // Create the response
-            file = new File(excelPath);
-            Resource resource = new FileSystemResource(file);
-            
-            // Schedule file deletion after response is sent
-            file.deleteOnExit();
-            
-            return ResponseEntity.ok()
-                    .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
-                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
-                    .body(resource);
-        } catch (Exception e) {
-            logger.error("Error generating Excel report: ", e);
-            // Clean up the file if it exists
-            if (file != null && file.exists()) {
-                file.delete();
+            List<TableMapping> selectedTables = request.getTableMappings();
+            if (selectedTables == null || selectedTables.isEmpty()) {
+                return ResponseEntity.badRequest().body(createErrorResponse("No tables selected for comparison"));
             }
-            throw new RuntimeException("Failed to generate Excel report: " + e.getMessage(), e);
+            String outputPath = generateOutputPath(DEFAULT_REPORT_NAME);
+            File reportFile = tableSchemaExtractor.compareAndGenerateReport(
+                    request.getSourceDbType(), request.getTargetDbType(),
+                    request.getSourceHost(), request.getSourcePort(), request.getSourceDbName(),
+                    request.getSourceUsername(), request.getSourcePassword(),
+                    request.getTargetHost(), request.getTargetPort(), request.getTargetDbName(),
+                    request.getTargetUsername(), request.getTargetPassword(),
+                    outputPath, selectedTables); // Pass selectedTables to the service
+            return handleFileResponse(reportFile, "Selected tables comparison completed successfully");
+        } catch (Exception e) {
+            logger.error("Error comparing selected tables: ", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(createErrorResponse("Error comparing selected tables: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Helper method to generate dynamic output path with unique name
+     */
+    private String generateOutputPath(String fileName) {
+        String timestamp = String.valueOf(System.currentTimeMillis());
+        String baseName = fileName;
+        if (baseName.contains(".")) {
+            int dotIndex = baseName.lastIndexOf('.');
+            baseName = baseName.substring(0, dotIndex) + "_" + timestamp + baseName.substring(dotIndex);
+        } else {
+            baseName = baseName + "_" + timestamp;
+        }
+        return System.getProperty("java.io.tmpdir") + File.separator + baseName;
+    }
+
+    /**
+     * Helper method to handle file response
+     */
+    private ResponseEntity<?> handleFileResponse(File file, String successMessage) {
+        if (file != null && file.exists()) {
+            Map<String, Object> response = createSuccessResponse(successMessage);
+            response.put("filePath", file.getAbsolutePath());
+            return ResponseEntity.ok(response);
+        } else {
+            return ResponseEntity.badRequest().body(createErrorResponse("Failed to generate comparison report"));
+        }
+    }
+
+    /**
+     * Helper method to create a success response
+     */
+    private Map<String, Object> createSuccessResponse(String message) {
+        Map<String, Object> response = new HashMap<>();
+        response.put("status", STATUS_SUCCESS);
+        response.put("message", message);
+        return response;
+    }
+
+    /**
+     * Helper method to create an error response
+     */
+    private Map<String, Object> createErrorResponse(String message) {
+        Map<String, Object> response = new HashMap<>();
+        response.put("status", STATUS_ERROR);
+        response.put("message", message);
+        return response;
+    }
+
+    @PostMapping("/get-available-tables")
+    public ResponseEntity<?> getAvailableTables(@Valid @RequestBody ComparisonRequest request) {
+        try {
+            List<TableMapping> tableMappings = tableSchemaExtractor.findCommonTables(
+                    request.getSourceDbType(), request.getTargetDbType(),
+                    request.getSourceHost(), request.getSourcePort(), request.getSourceDbName(),
+                    request.getSourceUsername(), request.getSourcePassword(),
+                    request.getTargetHost(), request.getTargetPort(), request.getTargetDbName(),
+                    request.getTargetUsername(), request.getTargetPassword());
+            // Transform TableMapping list into Map
+            Map<String, List<String>> availableTables = new HashMap<>();
+            availableTables.put("commonTables", tableMappings.stream()
+                    .map(mapping -> mapping.getSourceTable() + " -> " + mapping.getTargetTable())
+                    .collect(Collectors.toList()));
+            return ResponseEntity.ok(availableTables);
+        } catch (Exception e) {
+            logger.error("Error retrieving available tables: ", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(createErrorResponse("Error retrieving available tables: " + e.getMessage()));
         }
     }
 }
