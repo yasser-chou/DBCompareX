@@ -1,0 +1,15 @@
+<mat-toolbar color="primary">
+  <mat-toolbar-row>
+    <span class="app-title">
+      <mat-icon>compare</mat-icon>
+      Data Comparator
+    </span>
+    <span class="spacer"></span>
+    <button mat-icon-button (click)="toggleTheme()" matTooltip="Toggle theme">
+      <mat-icon>{{ isDarkTheme ? 'light_mode' : 'dark_mode' }}</mat-icon>
+    </button>
+    <a mat-icon-button href="https://github.com/yourusername/dbcomparex" target="_blank" matTooltip="View on GitHub">
+      <mat-icon>code</mat-icon>
+    </a>
+  </mat-toolbar-row>
+</mat-toolbar> 

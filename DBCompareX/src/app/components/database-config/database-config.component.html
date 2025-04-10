@@ -1,0 +1,79 @@
+<form [formGroup]="configForm" (ngSubmit)="onSubmit()">
+  <div fxLayout="column" fxLayoutGap="16px">
+    <!-- Database Type -->
+    <mat-form-field appearance="outline">
+      <mat-label>Database Type</mat-label>
+      <mat-select formControlName="dbType">
+        <mat-option value="mysql">MySQL</mat-option>
+        <mat-option value="postgresql">PostgreSQL</mat-option>
+        <mat-option value="oracle">Oracle</mat-option>
+        <mat-option value="sqlserver">SQL Server</mat-option>
+      </mat-select>
+      <mat-error *ngIf="configForm.get('dbType')?.hasError('required')">
+        Database type is required
+      </mat-error>
+    </mat-form-field>
+
+    <!-- Host -->
+    <mat-form-field appearance="outline">
+      <mat-label>Host</mat-label>
+      <input matInput formControlName="host" placeholder="e.g., localhost">
+      <mat-error *ngIf="configForm.get('host')?.hasError('required')">
+        Host is required
+      </mat-error>
+    </mat-form-field>
+
+    <!-- Port -->
+    <mat-form-field appearance="outline">
+      <mat-label>Port</mat-label>
+      <input matInput type="number" formControlName="port" placeholder="e.g., 3306">
+      <mat-error *ngIf="configForm.get('port')?.hasError('required')">
+        Port is required
+      </mat-error>
+      <mat-error *ngIf="configForm.get('port')?.hasError('min') || configForm.get('port')?.hasError('max')">
+        Port must be between 1 and 65535
+      </mat-error>
+    </mat-form-field>
+
+    <!-- Schema -->
+    <mat-form-field appearance="outline">
+      <mat-label>Schema/Database</mat-label>
+      <input matInput formControlName="schema" placeholder="e.g., mydb">
+      <mat-error *ngIf="configForm.get('schema')?.hasError('required')">
+        Schema/Database is required
+      </mat-error>
+    </mat-form-field>
+
+    <!-- Username -->
+    <mat-form-field appearance="outline">
+      <mat-label>Username</mat-label>
+      <input matInput formControlName="username" placeholder="e.g., root">
+      <mat-error *ngIf="configForm.get('username')?.hasError('required')">
+        Username is required
+      </mat-error>
+    </mat-form-field>
+
+    <!-- Password -->
+    <mat-form-field appearance="outline">
+      <mat-label>Password</mat-label>
+      <input matInput [type]="hidePassword ? 'password' : 'text'" formControlName="password">
+      <button mat-icon-button matSuffix (click)="hidePassword = !hidePassword" type="button">
+        <mat-icon>{{hidePassword ? 'visibility_off' : 'visibility'}}</mat-icon>
+      </button>
+      <mat-error *ngIf="configForm.get('password')?.hasError('required')">
+        Password is required
+      </mat-error>
+    </mat-form-field>
+
+    <!-- Test Connection Button -->
+    <div class="actions" fxLayout="row" fxLayoutAlign="start center" fxLayoutGap="16px">
+      <button mat-raised-button color="primary" type="button" (click)="testConnection()" [disabled]="!configForm.valid || isLoading">
+        <mat-icon>check_circle</mat-icon>
+        Test Connection
+      </button>
+      <mat-spinner diameter="20" *ngIf="isLoading"></mat-spinner>
+      <mat-icon *ngIf="connectionStatus === 'success'" class="success-icon">check_circle</mat-icon>
+      <mat-icon *ngIf="connectionStatus === 'error'" class="error-icon">error</mat-icon>
+    </div>
+  </div>
+</form> 

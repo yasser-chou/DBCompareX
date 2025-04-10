@@ -1,0 +1,39 @@
+.navbar {
+  background-color: black;
+  color: white;
+  padding: 0;
+  margin: 0;
+  width: 100%;
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1000;
+}
+
+.logo-container {
+  display: flex;
+  align-items: center;
+  margin-left: 16px;
+}
+
+.logo {
+  height: 30px;
+  margin-right: 10px;
+}
+
+.app-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.spacer {
+  flex: 1 1 auto;
+}
+
+.button{
+  margin-left:8px;
+}
+
+
+

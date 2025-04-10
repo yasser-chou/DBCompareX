@@ -41,43 +41,7 @@ public class TableSchemaExtractorController {
     /**
      * Compare all tables between two databases and generate a report
      */
-//    @Operation(summary = "Compare all tables between two databases",
-//            description = "Compares all tables between two databases and generates an Excel report containing differences.")
-//    @ApiResponse(responseCode = "200", description = "Comparison successful, report generated")
-//    @ApiResponse(responseCode = "400", description = "Invalid input or failed to generate report")
-//    @ApiResponse(responseCode = "500", description = "Internal server error during comparison")
-//    @PostMapping("/databases")
-//    public ResponseEntity<?> compareDatabases(@Valid @RequestBody ComparisonRequest request) {
-//        try {
-//            // Validate database type
-//            String sourceDbType = request.getSourceDbType();
-//            String targetDbType = request.getTargetDbType();
-//
-//            if (sourceDbType == null || sourceDbType.trim().isEmpty()) {
-//                return ResponseEntity.badRequest()
-//                    .body(createErrorResponse("Source database type cannot be empty"));
-//            }
-//
-//            if (targetDbType == null || targetDbType.trim().isEmpty()) {
-//                return ResponseEntity.badRequest()
-//                    .body(createErrorResponse("Target database type cannot be empty"));
-//            }
-//
-//            String outputPath = generateOutputPath(DEFAULT_REPORT_NAME);
-//            File excelFile = tableSchemaExtractor.compareAndGenerateReport(
-//                    request.getSourceDbType(), request.getTargetDbType(),
-//                    request.getSourceHost(), request.getSourcePort(), request.getSourceDbName(),
-//                    request.getSourceUsername(), request.getSourcePassword(),
-//                    request.getTargetHost(), request.getTargetPort(), request.getTargetDbName(),
-//                    request.getTargetUsername(), request.getTargetPassword(),
-//                    outputPath);
-//            return handleFileResponse(excelFile, "Database comparison completed successfully");
-//        } catch (Exception e) {
-//            logger.error("Error comparing databases: ", e);
-//            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-//                    .body(createErrorResponse("Error: " + e.getMessage()));
-//        }
-//    }
+    // Removed unused compareDatabases method
 
     /**
      * Download the generated report

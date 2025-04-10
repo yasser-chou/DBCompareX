@@ -705,40 +705,6 @@ public class TableSchemaExtractor {
         return key.length() > 0 ? key.toString() : null;
     }
 
-//    /**
-//     * Load data from a specific table
-//     */
-//    private Dataset<Row> loadTableData(String dbType, String host, int port,
-//                                       String dbName, String username, String password,
-//                                       String tableName, boolean isSource) {
-//        String jdbcUrl = getJdbcUrl(dbType, host, port, dbName);
-//        Properties connectionProperties = new Properties();
-//        connectionProperties.put("user", username);
-//        connectionProperties.put("password", password);
-//        connectionProperties.put("driver", getDriverClass(dbType));
-//        logger.info("Loading data from table: {} ({} database)", tableName, isSource ? "source" : "target");
-//
-//        try {
-//            // Load the table into a Spark DataFrame
-//            Dataset<Row> tableDf = sparkSession.read()
-//                    .jdbc(jdbcUrl, tableName, connectionProperties);
-//
-//            // Add source/target prefix to column names
-//            String prefix = isSource ? "src_" : "tgt_";
-//            for (String colName : tableDf.columns()) {
-//                tableDf = tableDf.withColumnRenamed(colName, prefix + colName.toLowerCase());
-//            }
-//
-//            // Add a column for the table name
-//            tableDf = tableDf.withColumn("table_name", functions.lit(tableName));
-//
-//            logger.info("Loaded {} rows from table {}", tableDf.count(), tableName);
-//            return tableDf;
-//        } catch (Exception e) {
-//            logger.error("Error loading table {}: {}", tableName, e.getMessage(), e);
-//            throw new RuntimeException("Failed to load table: " + tableName, e);
-//        }
-//    }
 
     /**
      * Get JDBC URL dynamically from configuration

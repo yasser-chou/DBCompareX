@@ -1,0 +1,48 @@
+<app-nav-bar></app-nav-bar>
+<div class="content">
+  <router-outlet></router-outlet>
+</div>
+
+<div class="container" fxLayout="column" fxLayoutGap="20px">
+  <!-- Database Configuration Section -->
+  <div fxLayout="row" fxLayout.lt-md="column" fxLayoutGap="20px">
+    <mat-card fxFlex="50">
+      <mat-card-header>
+        <mat-card-title>Database A (Source)</mat-card-title>
+      </mat-card-header>
+      <mat-card-content>
+        <app-database-config [configType]="'source'" (configChange)="onSourceConfigChange($event)"></app-database-config>
+      </mat-card-content>
+    </mat-card>
+
+    <mat-card fxFlex="50">
+      <mat-card-header>
+        <mat-card-title>Database B (Target)</mat-card-title>
+      </mat-card-header>
+      <mat-card-content>
+        <app-database-config [configType]="'target'" (configChange)="onTargetConfigChange($event)"></app-database-config>
+      </mat-card-content>
+    </mat-card>
+  </div>
+
+  <!-- Comparison Configuration Section -->
+  <mat-card>
+    <mat-card-header>
+      <mat-card-title>Comparison Configuration</mat-card-title>
+    </mat-card-header>
+    <mat-card-content>
+      <app-comparison-config (configChange)="onComparisonConfigChange($event)"></app-comparison-config>
+    </mat-card-content>
+  </mat-card>
+
+  <!-- Compare Button -->
+  <div class="action-buttons" fxLayout="row" fxLayoutAlign="center center">
+    <button mat-raised-button color="primary" (click)="startComparison()" [disabled]="!canCompare">
+      <mat-icon>compare_arrows</mat-icon>
+      Compare Databases
+    </button>
+  </div>
+
+  <!-- Results Section -->
+  <app-results *ngIf="showResults" [comparisonResults]="comparisonResults"></app-results>
+</div> 

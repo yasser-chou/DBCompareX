@@ -1,0 +1,101 @@
+<form [formGroup]="configForm" (ngSubmit)="onSubmit()" class="config-form">
+  <div class="form-section">
+    <h3>General Settings</h3>
+    <div class="form-row">
+      <mat-form-field>
+        <mat-label>Configuration Name</mat-label>
+        <input matInput formControlName="configName" placeholder="Enter configuration name">
+        <mat-error *ngIf="configForm.get('configName')?.hasError('required')">
+          Configuration name is required
+        </mat-error>
+      </mat-form-field>
+    </div>
+
+    <div class="checkbox-group">
+      <mat-checkbox formControlName="caseSensitive">Case Sensitive Comparison</mat-checkbox>
+      <mat-checkbox formControlName="ignoreWhitespace">Ignore Whitespace</mat-checkbox>
+      <mat-checkbox formControlName="ignoreNulls">Ignore Nulls</mat-checkbox>
+    </div>
+  </div>
+
+  <div class="form-section">
+    <h3>Comparison Thresholds</h3>
+    <div class="form-row">
+      <mat-form-field class="threshold-field">
+        <mat-label>String Similarity Threshold</mat-label>
+        <input matInput type="number" formControlName="stringSimilarityThreshold" min="0" max="1" step="0.1">
+        <mat-hint>Value between 0 and 1</mat-hint>
+        <mat-error *ngIf="configForm.get('stringSimilarityThreshold')?.hasError('required')">
+          Threshold is required
+        </mat-error>
+        <mat-error *ngIf="configForm.get('stringSimilarityThreshold')?.hasError('min') || 
+                         configForm.get('stringSimilarityThreshold')?.hasError('max')">
+          Value must be between 0 and 1
+        </mat-error>
+      </mat-form-field>
+
+      <mat-form-field class="threshold-field">
+        <mat-label>Numeric Tolerance</mat-label>
+        <input matInput type="number" formControlName="numericTolerance" min="0" step="0.01">
+        <mat-hint>Acceptable difference for numeric values</mat-hint>
+        <mat-error *ngIf="configForm.get('numericTolerance')?.hasError('required')">
+          Tolerance is required
+        </mat-error>
+        <mat-error *ngIf="configForm.get('numericTolerance')?.hasError('min')">
+          Value must be positive
+        </mat-error>
+      </mat-form-field>
+    </div>
+  </div>
+
+  <div class="form-section">
+    <h3>Table Mappings</h3>
+    <table class="mappings-table" formArrayName="tableMappings">
+      <thead>
+        <tr>
+          <th>Source Column</th>
+          <th>Target Column</th>
+          <th>Transformation</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr *ngFor="let mapping of tableMappings.controls; let i = index" [formGroupName]="i">
+          <td>
+            <mat-form-field>
+              <input matInput formControlName="sourceColumn" placeholder="Source column">
+            </mat-form-field>
+          </td>
+          <td>
+            <mat-form-field>
+              <input matInput formControlName="targetColumn" placeholder="Target column">
+            </mat-form-field>
+          </td>
+          <td>
+            <mat-form-field>
+              <mat-select formControlName="transformationType" (selectionChange)="updateTransformation(i)">
+                <mat-option value="none">None</mat-option>
+                <mat-option value="uppercase">Uppercase</mat-option>
+                <mat-option value="lowercase">Lowercase</mat-option>
+                <mat-option value="trim">Trim</mat-option>
+              </mat-select>
+            </mat-form-field>
+          </td>
+          <td>
+            <button mat-icon-button color="warn" type="button" (click)="removeMapping(i)">
+              <mat-icon>delete</mat-icon>
+            </button>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    <button mat-stroked-button type="button" (click)="addMapping()" class="add-mapping-btn">
+      <mat-icon>add</mat-icon> Add Mapping
+    </button>
+  </div>
+
+  <button mat-raised-button color="primary" type="submit" class="submit-button" [disabled]="!configForm.valid">
+    Save Configuration
+  </button>
+</form> 

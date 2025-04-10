@@ -1,31 +1,36 @@
-Workflow for Automated Databases Comparison and Reporting System
-User Authentication and Database Connection
-
-User Login: Users authenticate themselves using a secure login system.
-Database Selection: Users select the databases they want to compare (e.g., PostgreSQL, MySQL, SQL Server, Oracle).
-Connection Setup: Establish connections to the selected databases using appropriate drivers and credentials.
-Schema Extraction
-
-Automatic Schema Retrieval: Extract table schemas from the connected databases automatically.
-Schema Storage: Store the extracted schemas temporarily for comparison.
-Comparison Algorithm Execution
-
-Custom Comparison Algorithm: Implement a custom algorithm to compare table structures and data.
-Structure Comparison: Identify differences in table structures (e.g., columns, data types).
-Data Comparison: Detect discrepancies in data using hashing and indexing techniques.
-Record Identification: Identify missing, modified, or mismatched records.
-Discrepancy Detection and Analysis
-
-Discrepancy Logging: Log all detected discrepancies for further analysis.
-Performance Optimization: Optimize the comparison process for performance using efficient algorithms and data structures.
-Visualization and Reporting
-
-User-Friendly Interface: Use Angular to create an intuitive and interactive user interface.
-Discrepancy Visualization: Display discrepancies in a clear and organized manner.
-User Interaction: Allow users to filter, sort, and analyze discrepancies.
-Report Generation: Generate detailed reports of the comparison results.
-Excel and PDF Export: Provide options to export reports in Excel and PDF formats.
-System Maintenance and Updates
-
-Regular Updates: Keep the system updated with the latest database drivers and security patches.
-User Feedback: Collect user feedback to continuously improve the system.
+compare-selected-tables workflow:
+TableSchemaExtractorController - Contains the API endpoints
+compareSelectedTables method - Handles the API request
+getAvailableTables method - Retrieves the list of common tables
+downloadReport method - Downloads the generated report
+Helper methods: generateOutputPath, handleFileResponse, createSuccessResponse, createErrorResponse
+Service:
+TableSchemaExtractor - Main service class
+compareAndGenerateReport method - Main method for comparing tables and generating reports
+compareTables method - Compares tables between databases
+compareTableData method - Compares data between source and target tables
+getTableData method - Retrieves data from a table
+getConnection method - Establishes database connections
+getJdbcUrl method - Builds JDBC URLs
+closeConnection method - Safely closes database connections
+identifyPrimaryKeys method - Identifies primary keys in a table
+identifyBusinessKeys method - Identifies business keys in a table
+isBusinessKeyCandidate method - Checks if a column is a potential business key
+buildCompositeKey method - Builds a composite key from multiple columns
+normalizeValue method - Normalizes values for comparison
+findCommonTables method - Finds common tables between two databases
+fetchTableNames method - Fetches table names from a database
+fetchTableMetadata method - Fetches table metadata from a database
+testConnection method - Tests a database connection
+createTableMapping method - Creates a table mapping
+Entities:
+TableMapping - Represents a mapping between source and target tables
+ExcelGenerator - Generates Excel reports
+generateExcelReport method - Main method for generating Excel reports
+initializeStyles method - Initializes styles for the Excel workbook
+extractColumnsFromData method - Extracts column names from data
+processDifferences method - Processes differences in the data
+Various helper methods for formatting and cleaning data
+Configuration:
+DatabaseConfig - Configuration for database connections
+application.properties - Contains database configuration

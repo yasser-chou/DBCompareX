@@ -1,0 +1,41 @@
+:host {
+  display: block;
+}
+
+form {
+  padding: 16px;
+}
+
+mat-form-field {
+  width: 100%;
+}
+
+.actions {
+  margin-top: 8px;
+}
+
+.success-icon {
+  color: #4caf50;
+}
+
+.error-icon {
+  color: #f44336;
+}
+
+// Dark theme styles
+:host-context(.dark-theme) {
+  .success-icon {
+    color: #81c784;
+  }
+
+  .error-icon {
+    color: #e57373;
+  }
+}
+
+// Responsive styles
+@media screen and (max-width: 599px) {
+  form {
+    padding: 8px;
+  }
+} 

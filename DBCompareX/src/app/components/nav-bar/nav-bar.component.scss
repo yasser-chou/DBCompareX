@@ -1,0 +1,42 @@
+:host {
+  display: block;
+}
+
+.mat-toolbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+}
+
+.app-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 1.2rem;
+  font-weight: 500;
+}
+
+.spacer {
+  flex: 1 1 auto;
+}
+
+button {
+  margin-left: 8px;
+}
+
+// Dark theme styles
+:host-context(.dark-theme) {
+  .mat-toolbar {
+    background-color: #424242;
+    color: white;
+  }
+}
+
+// Responsive styles
+@media screen and (max-width: 599px) {
+  .app-title {
+    font-size: 1.2rem;
+  }
+} 
