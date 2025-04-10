@@ -1,6 +1,7 @@
 package com.DBCompareX.DBCompareX.service;
 
 import com.DBCompareX.DBCompareX.config.DatabaseConfig;
+import com.DBCompareX.DBCompareX.util.NormalizationUtils;
 import com.DBCompareX.DBCompareX.dao.entities.ExcelGenerator;
 import com.DBCompareX.DBCompareX.dao.entities.TableMapping;
 import org.apache.spark.sql.*;
@@ -10,8 +11,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
+import java.math.BigDecimal;
 import java.sql.*;
+import java.text.SimpleDateFormat;
 import java.util.*;
+import java.util.Date;
 import java.util.stream.Collectors;
 
 @Service
@@ -19,13 +23,13 @@ public class TableSchemaExtractor {
     private static final Logger logger = LoggerFactory.getLogger(TableSchemaExtractor.class);
 
     private final DatabaseConfig databaseConfig;
-    private final SparkSession sparkSession;
+//    private final SparkSession sparkSession;
     private final ExcelGenerator excelGenerator;
 
     @Autowired
-    public TableSchemaExtractor(DatabaseConfig databaseConfig, SparkSession sparkSession, ExcelGenerator excelGenerator) {
+    public TableSchemaExtractor(DatabaseConfig databaseConfig, ExcelGenerator excelGenerator) {
         this.databaseConfig = databaseConfig;
-        this.sparkSession = sparkSession;
+//        this.sparkSession = sparkSession;
         this.excelGenerator = excelGenerator;
 
         // Validate configuration on startup
@@ -646,8 +650,8 @@ public class TableSchemaExtractor {
         // Compare all fields in source record
         for (Map.Entry<String, Object> entry : sourceRecord.entrySet()) {
             String field = entry.getKey();
-            Object sourceValue = entry.getValue();
-            Object targetValue = targetRecord.get(field);
+            Object sourceValue = normalizeValue(entry.getValue()); // Normalize source value
+            Object targetValue = normalizeValue(targetRecord.get(field)); // Normalize target value
 
             if (!Objects.equals(sourceValue, targetValue)) {
                 Map<String, String> difference = new HashMap<>();
@@ -661,7 +665,7 @@ public class TableSchemaExtractor {
         // Check for fields only in target
         for (String field : targetRecord.keySet()) {
             if (!sourceRecord.containsKey(field)) {
-                Object targetValue = targetRecord.get(field);
+                Object targetValue = normalizeValue(targetRecord.get(field)); // Normalize target value
                 Map<String, String> difference = new HashMap<>();
                 difference.put("field", field);
                 difference.put("source", "<NULL>");
@@ -674,6 +678,11 @@ public class TableSchemaExtractor {
         return result;
     }
 
+    /*Normalize values to ensure consistent comparison across databases*/
+    private Object normalizeValue(Object value) {
+        return NormalizationUtils.normalizeValue(value);
+    }
+
     /**
      * Builds a composite key from multiple columns
      */
@@ -681,7 +690,6 @@ public class TableSchemaExtractor {
         if (keyColumns == null || keyColumns.isEmpty() || record == null) {
             return null;
         }
-
         StringBuilder key = new StringBuilder();
         for (String column : keyColumns) {
             Object value = record.get(column);
@@ -689,61 +697,48 @@ public class TableSchemaExtractor {
                 if (key.length() > 0) {
                     key.append(":");
                 }
+                // Normalize the value before building the composite key
+                value = normalizeValue(value);
                 key.append(value.toString());
             }
         }
-
         return key.length() > 0 ? key.toString() : null;
     }
 
-    /**
-     * Load data from a specific table
-     */
-    private Dataset<Row> loadTableData(String dbType, String host, int port,
-                                       String dbName, String username, String password,
-                                       String tableName, boolean isSource) {
-        String jdbcUrl = getJdbcUrl(dbType, host, port, dbName);
-        Properties connectionProperties = new Properties();
-        connectionProperties.put("user", username);
-        connectionProperties.put("password", password);
-        connectionProperties.put("driver", getDriverClass(dbType));
-
-        logger.info("Loading data from table: {} ({} database)", tableName, isSource ? "source" : "target");
-        logger.debug("JDBC URL: {}", jdbcUrl);
-        logger.debug("Connection properties: user={}, driver={}", username, getDriverClass(dbType));
-
-        try {
-            Dataset<Row> tableDf = sparkSession.read()
-                    .jdbc(jdbcUrl, tableName, connectionProperties);
-
-            logger.debug("Table {} loaded with {} columns: {}",
-                    tableName, tableDf.columns().length, Arrays.asList(tableDf.columns()));
-
-            // Add source/target prefix to column names
-            String prefix = isSource ? "src_" : "tgt_";
-            for (String colName : tableDf.columns()) {
-                tableDf = tableDf.withColumnRenamed(colName, prefix + colName.toLowerCase());
-            }
-
-            logger.debug("After renaming, columns: {}", Arrays.asList(tableDf.columns()));
-
-            // Add table name column
-            tableDf = tableDf.withColumn("table_name", functions.lit(tableName));
-
-            // Sample the data to verify it's loaded correctly
-            if (tableDf.count() > 0) {
-                logger.debug("Sample data from table {}: {}", tableName,
-                        tableDf.limit(1).collectAsList().get(0).toString());
-            } else {
-                logger.warn("Table {} is empty", tableName);
-            }
-
-            return tableDf;
-        } catch (Exception e) {
-            logger.error("Error loading table {}: {}", tableName, e.getMessage(), e);
-            throw new RuntimeException("Failed to load table: " + tableName, e);
-        }
-    }
+//    /**
+//     * Load data from a specific table
+//     */
+//    private Dataset<Row> loadTableData(String dbType, String host, int port,
+//                                       String dbName, String username, String password,
+//                                       String tableName, boolean isSource) {
+//        String jdbcUrl = getJdbcUrl(dbType, host, port, dbName);
+//        Properties connectionProperties = new Properties();
+//        connectionProperties.put("user", username);
+//        connectionProperties.put("password", password);
+//        connectionProperties.put("driver", getDriverClass(dbType));
+//        logger.info("Loading data from table: {} ({} database)", tableName, isSource ? "source" : "target");
+//
+//        try {
+//            // Load the table into a Spark DataFrame
+//            Dataset<Row> tableDf = sparkSession.read()
+//                    .jdbc(jdbcUrl, tableName, connectionProperties);
+//
+//            // Add source/target prefix to column names
+//            String prefix = isSource ? "src_" : "tgt_";
+//            for (String colName : tableDf.columns()) {
+//                tableDf = tableDf.withColumnRenamed(colName, prefix + colName.toLowerCase());
+//            }
+//
+//            // Add a column for the table name
+//            tableDf = tableDf.withColumn("table_name", functions.lit(tableName));
+//
+//            logger.info("Loaded {} rows from table {}", tableDf.count(), tableName);
+//            return tableDf;
+//        } catch (Exception e) {
+//            logger.error("Error loading table {}: {}", tableName, e.getMessage(), e);
+//            throw new RuntimeException("Failed to load table: " + tableName, e);
+//        }
+//    }
 
     /**
      * Get JDBC URL dynamically from configuration
@@ -804,16 +799,6 @@ public class TableSchemaExtractor {
         return baseJdbcUrl + host + ":" + port + "/" + dbName;
     }
 
-    /**
-     * Get JDBC driver class dynamically from configuration
-     */
-    private String getDriverClass(String dbType) {
-        String driverClass = databaseConfig.getDriver().get(dbType.toLowerCase());
-        if (driverClass == null) {
-            throw new IllegalArgumentException("Unsupported database type: " + dbType);
-        }
-        return driverClass;
-    }
 
     /**
      * Get a database connection using JDBC URL
@@ -822,14 +807,35 @@ public class TableSchemaExtractor {
         try {
             // Load the driver class dynamically based on the JDBC URL
             String driverClass = null;
+            
+            // Extract database type from JDBC URL
+            String dbType = null;
             if (jdbcUrl.contains("mysql")) {
-                driverClass = "com.mysql.cj.jdbc.Driver";
+                dbType = "mysql";
             } else if (jdbcUrl.contains("postgresql")) {
-                driverClass = "org.postgresql.Driver";
+                dbType = "postgresql";
             } else if (jdbcUrl.contains("sqlserver")) {
-                driverClass = "com.microsoft.sqlserver.jdbc.SQLServerDriver";
+                dbType = "sqlserver";
             } else if (jdbcUrl.contains("oracle")) {
-                driverClass = "oracle.jdbc.OracleDriver";
+                dbType = "oracle";
+            }
+            
+            // Get driver class from configuration
+            if (dbType != null && databaseConfig != null && databaseConfig.getDriver() != null) {
+                driverClass = databaseConfig.getDriver().get(dbType);
+            }
+            
+            // Fallback to hardcoded values if configuration is not available
+            if (driverClass == null) {
+                if (jdbcUrl.contains("mysql")) {
+                    driverClass = "com.mysql.cj.jdbc.Driver";
+                } else if (jdbcUrl.contains("postgresql")) {
+                    driverClass = "org.postgresql.Driver";
+                } else if (jdbcUrl.contains("sqlserver")) {
+                    driverClass = "com.microsoft.sqlserver.jdbc.SQLServerDriver";
+                } else if (jdbcUrl.contains("oracle")) {
+                    driverClass = "oracle.jdbc.OracleDriver";
+                }
             }
 
             if (driverClass != null) {
@@ -869,35 +875,33 @@ public class TableSchemaExtractor {
     /**
      * Get table data as a list of maps
      */
-    private List<Map<String, Object>> getTableData(String dbType, String host, int port,
-                                                  String dbName, String username, String password,
-                                                  String tableName) {
-        List<Map<String, Object>> data = new ArrayList<>();
+    private List<Map<String, Object>> getTableData(String dbType, String host, int port, String dbName, String username, String password, String tableName) {
         Connection conn = null;
         try {
             conn = getConnection(dbType, host, port, dbName, username, password);
-            try (Statement stmt = conn.createStatement();
-                 ResultSet rs = stmt.executeQuery("SELECT * FROM " + tableName)) {
+            Statement stmt = conn.createStatement();
+            ResultSet rs = stmt.executeQuery("SELECT * FROM " + tableName);
 
-                ResultSetMetaData metaData = rs.getMetaData();
-                int columnCount = metaData.getColumnCount();
+            ResultSetMetaData metaData = rs.getMetaData();
+            int columnCount = metaData.getColumnCount();
+            List<Map<String, Object>> data = new ArrayList<>();
 
-                while (rs.next()) {
-                    Map<String, Object> row = new HashMap<>();
-                    for (int i = 1; i <= columnCount; i++) {
-                        String columnName = metaData.getColumnName(i).toLowerCase();
-                        Object value = rs.getObject(i);
-                        row.put(columnName, value);
-                    }
-                    data.add(row);
+            while (rs.next()) {
+                Map<String, Object> row = new HashMap<>();
+                for (int i = 1; i <= columnCount; i++) {
+                    String columnName = metaData.getColumnName(i).toLowerCase();
+                    Object value = rs.getObject(i);
+                    row.put(columnName, value);
                 }
+                data.add(row);
             }
+
+            return data;
         } catch (SQLException e) {
             logger.error("Error fetching data from table {}: {}", tableName, e.getMessage());
             throw new RuntimeException("Failed to fetch table data", e);
         } finally {
             closeConnection(conn);
         }
-        return data;
     }
 }

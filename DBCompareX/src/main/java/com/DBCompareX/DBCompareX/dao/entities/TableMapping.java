@@ -1,5 +1,7 @@
 package com.DBCompareX.DBCompareX.dao.entities;
 
+import lombok.Getter;
+import lombok.Setter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
@@ -8,6 +10,8 @@ import java.util.List;
 /**
  * Represents a mapping between source and target tables
  */
+@Getter
+@Setter
 public class TableMapping {
     private static final Logger logger = LoggerFactory.getLogger(TableMapping.class);
 
