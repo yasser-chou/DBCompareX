@@ -1,12 +1,15 @@
 import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { Observable } from 'rxjs';
+import {BehaviorSubject, Observable} from 'rxjs';
 
 export interface DatabaseConfig{
-  jdbcUrl :string;
+  dbType:string;
+  host:string;
+  port:string;
   username:string;
   password:string;
-  databaseType:string;
+  schema:string;
+  table?:string;
 }
 
 export interface TableInfo {
@@ -15,11 +18,19 @@ export interface TableInfo {
   rowCount:number;
 }
 
+
+export interface ConnectionStatus{
+  success:boolean;
+  message:string;
+}
+
 @Injectable({
   providedIn: 'root'
 })
 export class DatabaseService {
   private apiUrl = 'http://localhost:8080/api';
+  private configSource = new BehaviorSubject<{source?: DatabaseConfig,target?: DatabaseConfig}>({});
+  currentConfig = this.configSource.asObservable();
 
   constructor(private http: HttpClient) { }
 
