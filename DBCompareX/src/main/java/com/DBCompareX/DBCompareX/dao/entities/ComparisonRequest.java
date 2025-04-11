@@ -41,6 +41,11 @@ public class ComparisonRequest {
     private String targetPassword;
 
     private List<TableMapping> tableMappings; // For selected table comparison
-
+    
+    private String sourceSchemaFilter; // Filter for source database schema (optional)
+    
+    private String targetSchemaFilter; // Filter for target database schema (optional)
+    
+    private Integer maxTables; // Maximum number of tables to compare (optional)
 
 }

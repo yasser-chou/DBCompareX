@@ -1,1 +1,11 @@
-<p>comparison-config works!</p>
+<div class="comparison-config-container">
+  <h2>Comparison Configuration</h2>
+  <p>This component will be implemented in the next phase.</p>
+</div>
+
+<ng-container matColumnDef="isKey">
+  <th mat-header-cell *matHeaderCellDef>Primary Key</th>
+  <td mat-cell *matCellDef="let mapping">
+    <mat-checkbox [(ngModel)]="mapping.iskey"></mat-checkbox>
+  </td>
+</ng-container>

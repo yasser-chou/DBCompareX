@@ -6,5 +6,5 @@ import { Component } from '@angular/core';
   styleUrls: ['./comparison-config.component.scss']
 })
 export class ComparisonConfigComponent {
-
+  // Minimal placeholder implementation for now
 }

@@ -78,26 +78,100 @@ public class TableSchemaExtractor {
      * Fetch all table names from a database
      */
     public List<String> fetchTableNames(String dbType, String host, int port,
-                                        String dbName, String username, String password) {
+                                        String dbName, String username, String password,
+                                        String schemaFilter,Integer maxTables) {
         String jdbcUrl = getJdbcUrl(dbType, host, port, dbName);
         List<String> tableNames = new ArrayList<>();
         try {
             testConnection(jdbcUrl, username, password);
             try (Connection conn = getConnection(jdbcUrl, username, password)) {
                 DatabaseMetaData metaData = conn.getMetaData();
-                try (ResultSet tables = metaData.getTables(null, null, "%", new String[]{"TABLE"})) {
-                    while (tables.next()) {
-                        tableNames.add(tables.getString("TABLE_NAME").toLowerCase());
+
+                //Apply schema filter for Oracle
+                String schema = null;
+                if(dbType.equalsIgnoreCase("oracle") && schemaFilter != null){
+                    // Handle Oracle schema names with special characters
+                    schema = schemaFilter.toUpperCase();
+                    
+                    // Verify if the provided schema exists
+                    String schemaQuery = "SELECT username FROM all_users WHERE username = ?";
+                    boolean schemaExists = false;
+                    
+                    try (PreparedStatement stmt = conn.prepareStatement(schemaQuery)) {
+                        stmt.setString(1, schema);
+                        try (ResultSet rs = stmt.executeQuery()) {
+                            if (rs.next()) {
+                                schemaExists = true;
+                                logger.info("Schema '{}' exists, filtering Oracle tables by this schema", schema);
+                            }
+                        }
                     }
+                    
+                    if (!schemaExists) {
+                        // Try checking with quotes (for special characters)
+                        schemaQuery = "SELECT username FROM all_users WHERE username = ?";
+                        try (PreparedStatement stmt = conn.prepareStatement(schemaQuery)) {
+                            stmt.setString(1, "\"" + schema + "\"");
+                            try (ResultSet rs = stmt.executeQuery()) {
+                                if (rs.next()) {
+                                    schema = "\"" + schema + "\"";
+                                    schemaExists = true;
+                                    logger.info("Schema '{}' (with quotes) exists, filtering Oracle tables", schema);
+                                }
+                            }
+                        } catch (SQLException e) {
+                            logger.warn("Error checking quoted schema: {}", e.getMessage());
+                        }
+                        
+                        if (!schemaExists) {
+                            logger.warn("Schema '{}' does not exist, falling back to user's schema", schema);
+                            schema = username.toUpperCase();
+                            logger.info("Using default schema (username): {}", schema);
+                        }
+                    }
+                } else if (dbType.equalsIgnoreCase("oracle")){
+                    schema = username.toUpperCase();
+                    logger.info("Using default schema (username): {}", schema);
                 }
-                if (tableNames.isEmpty()) {
-                    try (ResultSet tables = metaData.getTables(null, username.toUpperCase(), "%", new String[]{"TABLE"})) {
+
+                // For Oracle, use direct SQL query to get tables in specific schema
+                if (dbType.equalsIgnoreCase("oracle") && schema != null) {
+                    // List available schemas for troubleshooting
+                    logger.info("Available schemas in the database:");
+                    try (Statement stmt = conn.createStatement();
+                         ResultSet rs = stmt.executeQuery("SELECT username FROM all_users ORDER BY username")) {
+                        while (rs.next()) {
+                            logger.info(" - {}", rs.getString(1));
+                        }
+                    } catch (SQLException e) {
+                        logger.warn("Could not list available schemas: {}", e.getMessage());
+                    }
+                    
+                    String query = "SELECT table_name FROM all_tables WHERE owner = ?";
+                    try (PreparedStatement stmt = conn.prepareStatement(query)) {
+                        stmt.setString(1, schema.replace("\"", ""));  // Remove quotes for parameter binding
+                        try (ResultSet rs = stmt.executeQuery()) {
+                            while (rs.next()) {
+                                tableNames.add(rs.getString(1).toLowerCase());
+                            }
+                        }
+                    }
+                } else {
+                    // For other DBs, use standard metadata approach
+                    try (ResultSet tables = metaData.getTables(null, schema, "%", new String[]{"TABLE"})) {
                         while (tables.next()) {
                             tableNames.add(tables.getString("TABLE_NAME").toLowerCase());
                         }
                     }
                 }
-                logger.info("Found {} tables in database {}", tableNames.size(), dbName);
+
+                // Limit the number of tables if specified
+                if (maxTables != null && maxTables > 0 && tableNames.size() > maxTables) {
+                    logger.info("Limiting tables from {} to {}", tableNames.size(), maxTables);
+                    return tableNames.subList(0, maxTables);
+                }
+
+                logger.info("Found {} tables in database {}, schema {}", tableNames.size(), dbName, schema);
                 return tableNames;
             }
         } catch (SQLException e) {
@@ -127,7 +201,7 @@ public class TableSchemaExtractor {
      */
     public TableMetadata fetchTableMetadata(String dbType, String host, int port,
                                             String dbName, String username, String password,
-                                            String tableName) {
+                                            String tableName, String schemaFilter) {
         String jdbcUrl = getJdbcUrl(dbType, host, port, dbName);
         List<String> primaryKeyColumns = new ArrayList<>();
         List<String> allColumns = new ArrayList<>();
@@ -135,30 +209,100 @@ public class TableSchemaExtractor {
             testConnection(jdbcUrl, username, password);
             try (Connection conn = getConnection(jdbcUrl, username, password)) {
                 DatabaseMetaData metaData = conn.getMetaData();
-                try (ResultSet primaryKeys = metaData.getPrimaryKeys(null, null, tableName)) {
+
+                // Apply schema filter for Oracle
+                String schema = null;
+                if (dbType.equalsIgnoreCase("oracle") && schemaFilter != null) {
+                    schema = schemaFilter.toUpperCase();
+                    // Check if the schema exists and format it properly
+                    boolean schemaExists = false;
+                    String schemaQuery = "SELECT username FROM all_users WHERE username = ?";
+                    
+                    try (PreparedStatement stmt = conn.prepareStatement(schemaQuery)) {
+                        stmt.setString(1, schema);
+                        try (ResultSet rs = stmt.executeQuery()) {
+                            if (rs.next()) {
+                                schemaExists = true;
+                            }
+                        }
+                    }
+                    
+                    if (!schemaExists) {
+                        // Try with quotes for special characters
+                        try (PreparedStatement stmt = conn.prepareStatement(schemaQuery)) {
+                            stmt.setString(1, "\"" + schema + "\"");
+                            try (ResultSet rs = stmt.executeQuery()) {
+                                if (rs.next()) {
+                                    schema = "\"" + schema + "\"";
+                                    schemaExists = true;
+                                }
+                            }
+                        } catch (SQLException e) {
+                            logger.warn("Error checking quoted schema: {}", e.getMessage());
+                        }
+                        
+                        if (!schemaExists) {
+                            logger.warn("Schema '{}' does not exist, falling back to user's schema", schema);
+                            schema = username.toUpperCase();
+                        }
+                    }
+                } else if (dbType.equalsIgnoreCase("oracle")) {
+                    schema = username.toUpperCase();
+                }
+
+                try (ResultSet primaryKeys = metaData.getPrimaryKeys(null, schema, tableName)) {
                     while (primaryKeys.next()) {
                         primaryKeyColumns.add(primaryKeys.getString("COLUMN_NAME").toLowerCase());
                     }
                 }
-                if (primaryKeyColumns.isEmpty()) {
-                    try (ResultSet primaryKeys = metaData.getPrimaryKeys(null, username.toUpperCase(), tableName)) {
-                        while (primaryKeys.next()) {
-                            primaryKeyColumns.add(primaryKeys.getString("COLUMN_NAME").toLowerCase());
-                        }
-                    }
-                }
-                try (ResultSet columns = metaData.getColumns(null, null, tableName, "%")) {
+
+                try (ResultSet columns = metaData.getColumns(null, schema, tableName, "%")) {
                     while (columns.next()) {
                         allColumns.add(columns.getString("COLUMN_NAME").toLowerCase());
                     }
                 }
-                if (allColumns.isEmpty()) {
-                    try (ResultSet columns = metaData.getColumns(null, username.toUpperCase(), tableName, "%")) {
-                        while (columns.next()) {
-                            allColumns.add(columns.getString("COLUMN_NAME").toLowerCase());
+
+                // For Oracle, if no columns found using metadata, try direct SQL query
+                if (allColumns.isEmpty() && dbType.equalsIgnoreCase("oracle") && schema != null) {
+                    logger.info("No columns found using metadata API for {}, trying direct SQL query", tableName);
+                    
+                    String schemaParam = schema.replace("\"", ""); // Remove quotes for parameter binding
+                    String query = "SELECT column_name FROM all_tab_columns WHERE owner = ? AND table_name = ?";
+                    try (PreparedStatement stmt = conn.prepareStatement(query)) {
+                        stmt.setString(1, schemaParam);
+                        stmt.setString(2, tableName.toUpperCase());
+                        try (ResultSet rs = stmt.executeQuery()) {
+                            while (rs.next()) {
+                                String columnName = rs.getString(1).toLowerCase();
+                                allColumns.add(columnName);
+                                logger.debug("Added column from direct SQL: {}", columnName);
+                            }
+                        }
+                    }
+                    
+                    // If we found columns but no primary keys, try to find primary keys using SQL
+                    if (!allColumns.isEmpty() && primaryKeyColumns.isEmpty()) {
+                        String pkQuery = "SELECT cols.column_name " +
+                                  "FROM all_constraints cons, all_cons_columns cols " +
+                                  "WHERE cons.constraint_type = 'P' " +
+                                  "AND cons.constraint_name = cols.constraint_name " +
+                                  "AND cons.owner = ? " +
+                                  "AND cols.table_name = ?";
+                        
+                        try (PreparedStatement stmt = conn.prepareStatement(pkQuery)) {
+                            stmt.setString(1, schemaParam);
+                            stmt.setString(2, tableName.toUpperCase());
+                            try (ResultSet rs = stmt.executeQuery()) {
+                                while (rs.next()) {
+                                    String columnName = rs.getString(1).toLowerCase();
+                                    primaryKeyColumns.add(columnName);
+                                    logger.info("Added primary key from direct SQL: {}", columnName);
+                                }
+                            }
                         }
                     }
                 }
+
                 logger.info("Table {} has {} columns with {} primary keys",
                         tableName, allColumns.size(), primaryKeyColumns.size());
                 return new TableMetadata(tableName, primaryKeyColumns, allColumns);
@@ -168,17 +312,17 @@ public class TableSchemaExtractor {
             throw new RuntimeException("Failed to fetch table metadata: " + e.getMessage(), e);
         }
     }
-
     /**
      * Find common tables between two databases with improved matching
      */
     public List<TableMapping> findCommonTables(
             String srcDbType, String tgtDbType,
             String srcHost, int srcPort, String srcDbName, String srcUsername, String srcPassword,
-            String tgtHost, int tgtPort, String tgtDbName, String tgtUsername, String tgtPassword) {
+            String tgtHost, int tgtPort, String tgtDbName, String tgtUsername, String tgtPassword,
+            String sourceSchemaFilter,String targetSchemaFilter,Integer maxTables) {
 
-        List<String> srcTables = fetchTableNames(srcDbType, srcHost, srcPort, srcDbName, srcUsername, srcPassword);
-        List<String> tgtTables = fetchTableNames(tgtDbType, tgtHost, tgtPort, tgtDbName, tgtUsername, tgtPassword);
+        List<String> srcTables = fetchTableNames(srcDbType, srcHost, srcPort, srcDbName, srcUsername, srcPassword,sourceSchemaFilter,maxTables);
+        List<String> tgtTables = fetchTableNames(tgtDbType, tgtHost, tgtPort, tgtDbName, tgtUsername, tgtPassword,targetSchemaFilter,maxTables);
 
         // First try exact matches
         Map<String, String> tgtTablesMap = tgtTables.stream()
@@ -194,8 +338,8 @@ public class TableSchemaExtractor {
                 String tgtTable = tgtTablesMap.get(srcTableLower);
                 matchedTargetTables.add(tgtTable.toLowerCase());
 
-                TableMetadata srcMetadata = fetchTableMetadata(srcDbType, srcHost, srcPort, srcDbName, srcUsername, srcPassword, srcTable);
-                TableMetadata tgtMetadata = fetchTableMetadata(tgtDbType, tgtHost, tgtPort, tgtDbName, tgtUsername, tgtPassword, tgtTable);
+                TableMetadata srcMetadata = fetchTableMetadata(srcDbType, srcHost, srcPort, srcDbName, srcUsername, srcPassword, srcTable, sourceSchemaFilter);
+                TableMetadata tgtMetadata = fetchTableMetadata(tgtDbType, tgtHost, tgtPort, tgtDbName, tgtUsername, tgtPassword, tgtTable, targetSchemaFilter);
 
                 TableMapping mapping = createTableMapping(srcTable, tgtTable, srcMetadata, tgtMetadata,
                         srcDbType, srcHost, srcPort, srcDbName, srcUsername, srcPassword,
@@ -216,17 +360,57 @@ public class TableSchemaExtractor {
      * Identifies primary keys and unique constraints for a table
      */
     private List<String> identifyPrimaryKeys(String dbType, String host, int port, String dbName,
-                                           String username, String password, String tableName) {
+                                           String username, String password, String tableName, String schemaFilter) {
         List<String> primaryKeys = new ArrayList<>();
         Connection conn = null;
         try {
             conn = getConnection(dbType, host, port, dbName, username, password);
             DatabaseMetaData metaData = conn.getMetaData();
 
-            logger.info("Attempting to identify primary keys for table: {}", tableName);
+            // Apply schema filter for Oracle
+            String schema = null;
+            if (dbType.equalsIgnoreCase("oracle") && schemaFilter != null) {
+                schema = schemaFilter.toUpperCase();
+                // Check if the schema exists and format it properly
+                boolean schemaExists = false;
+                String schemaQuery = "SELECT username FROM all_users WHERE username = ?";
+                
+                try (PreparedStatement stmt = conn.prepareStatement(schemaQuery)) {
+                    stmt.setString(1, schema);
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        if (rs.next()) {
+                            schemaExists = true;
+                        }
+                    }
+                }
+                
+                if (!schemaExists) {
+                    // Try with quotes for special characters
+                    try (PreparedStatement stmt = conn.prepareStatement(schemaQuery)) {
+                        stmt.setString(1, "\"" + schema + "\"");
+                        try (ResultSet rs = stmt.executeQuery()) {
+                            if (rs.next()) {
+                                schema = "\"" + schema + "\"";
+                                schemaExists = true;
+                            }
+                        }
+                    } catch (SQLException e) {
+                        logger.warn("Error checking quoted schema: {}", e.getMessage());
+                    }
+                    
+                    if (!schemaExists) {
+                        logger.warn("Schema '{}' does not exist, falling back to user's schema", schema);
+                        schema = username.toUpperCase();
+                    }
+                }
+            } else if (dbType.equalsIgnoreCase("oracle")) {
+                schema = username.toUpperCase();
+            }
 
-            // First try to get primary keys
-            try (ResultSet pkRs = metaData.getPrimaryKeys(null, null, tableName)) {
+            logger.info("Attempting to identify primary keys for table: {} in schema: {}", tableName, schema);
+
+            // First try to get primary keys - For Oracle, use the schema qualified name directly in tables
+            try (ResultSet pkRs = metaData.getPrimaryKeys(null, schema, tableName)) {
                 while (pkRs.next()) {
                     String columnName = pkRs.getString("COLUMN_NAME");
                     primaryKeys.add(columnName.toLowerCase());
@@ -237,7 +421,7 @@ public class TableSchemaExtractor {
             // If no primary keys found, look for unique indices
             if (primaryKeys.isEmpty()) {
                 logger.info("No primary keys found, checking unique indices for table: {}", tableName);
-                try (ResultSet indexRs = metaData.getIndexInfo(null, null, tableName, true, false)) {
+                try (ResultSet indexRs = metaData.getIndexInfo(null, schema, tableName, true, false)) {
                     while (indexRs.next()) {
                         String columnName = indexRs.getString("COLUMN_NAME");
                         if (!primaryKeys.contains(columnName.toLowerCase())) {
@@ -245,6 +429,32 @@ public class TableSchemaExtractor {
                             logger.info("Found unique index column: {}", columnName);
                         }
                     }
+                }
+            }
+
+            // For Oracle, if still no primary keys found, try to look up primary keys directly using SQL
+            if (primaryKeys.isEmpty() && dbType.equalsIgnoreCase("oracle") && schema != null) {
+                String schemaParam = schema.replace("\"", ""); // Remove quotes for parameter binding
+                
+                String query = "SELECT cols.column_name " +
+                               "FROM all_constraints cons, all_cons_columns cols " +
+                               "WHERE cons.constraint_type = 'P' " +
+                               "AND cons.constraint_name = cols.constraint_name " +
+                               "AND cons.owner = ? " +
+                               "AND cols.table_name = ?";
+                
+                try (PreparedStatement stmt = conn.prepareStatement(query)) {
+                    stmt.setString(1, schemaParam);
+                    stmt.setString(2, tableName.toUpperCase());
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        while (rs.next()) {
+                            String columnName = rs.getString(1);
+                            primaryKeys.add(columnName.toLowerCase());
+                            logger.info("Found primary key column from direct SQL: {}", columnName);
+                        }
+                    }
+                } catch (SQLException e) {
+                    logger.error("Error querying Oracle primary keys: {}", e.getMessage());
                 }
             }
 
@@ -267,7 +477,7 @@ public class TableSchemaExtractor {
      * Identifies potential business keys based on column properties
      */
     private List<String> identifyBusinessKeys(String dbType, String host, int port, String dbName,
-                                            String username, String password, String tableName) {
+                                            String username, String password, String tableName, String schemaFilter) {
         List<String> businessKeys = new ArrayList<>();
         Connection conn = null;
 
@@ -275,10 +485,18 @@ public class TableSchemaExtractor {
             conn = getConnection(dbType, host, port, dbName, username, password);
             DatabaseMetaData metaData = conn.getMetaData();
 
+            // Apply schema filter for Oracle
+            String schema = null;
+            if (dbType.equalsIgnoreCase("oracle") && schemaFilter != null) {
+                schema = schemaFilter.toUpperCase();
+            } else if (dbType.equalsIgnoreCase("oracle")) {
+                schema = username.toUpperCase();
+            }
+
             logger.debug("Analyzing columns for business keys in table: {}", tableName);
 
             // Get column metadata
-            try (ResultSet columns = metaData.getColumns(null, null, tableName, null)) {
+            try (ResultSet columns = metaData.getColumns(null, schema, tableName, null)) {
                 while (columns.next()) {
                     String columnName = columns.getString("COLUMN_NAME").toLowerCase();
                     int nullable = columns.getInt("NULLABLE");
@@ -360,8 +578,8 @@ public class TableSchemaExtractor {
         List<String> keyColumns = new ArrayList<>();
 
         // First try to detect primary keys
-        List<String> srcPrimaryKeys = identifyPrimaryKeys(srcDbType, srcHost, srcPort, srcDbName, srcUsername, srcPassword, srcTable);
-        List<String> tgtPrimaryKeys = identifyPrimaryKeys(tgtDbType, tgtHost, tgtPort, tgtDbName, tgtUsername, tgtPassword, tgtTable);
+        List<String> srcPrimaryKeys = identifyPrimaryKeys(srcDbType, srcHost, srcPort, srcDbName, srcUsername, srcPassword, srcTable, null);
+        List<String> tgtPrimaryKeys = identifyPrimaryKeys(tgtDbType, tgtHost, tgtPort, tgtDbName, tgtUsername, tgtPassword, tgtTable, null);
 
         // Use primary keys if available
         if (!srcPrimaryKeys.isEmpty() && !tgtPrimaryKeys.isEmpty()) {
@@ -379,8 +597,8 @@ public class TableSchemaExtractor {
 
         // If no common primary keys, try to identify business keys
         if (keyColumns.isEmpty()) {
-            List<String> srcBusinessKeys = identifyBusinessKeys(srcDbType, srcHost, srcPort, srcDbName, srcUsername, srcPassword, srcTable);
-            List<String> tgtBusinessKeys = identifyBusinessKeys(tgtDbType, tgtHost, tgtPort, tgtDbName, tgtUsername, tgtPassword, tgtTable);
+            List<String> srcBusinessKeys = identifyBusinessKeys(srcDbType, srcHost, srcPort, srcDbName, srcUsername, srcPassword, srcTable, null);
+            List<String> tgtBusinessKeys = identifyBusinessKeys(tgtDbType, tgtHost, tgtPort, tgtDbName, tgtUsername, tgtPassword, tgtTable, null);
 
             Set<String> commonBusinessKeys = new HashSet<>();
             for (String srcKey : srcBusinessKeys) {
@@ -418,7 +636,8 @@ public class TableSchemaExtractor {
             String srcDbType, String tgtDbType,
             String srcHost, int srcPort, String srcDbName, String srcUsername, String srcPassword,
             String tgtHost, int tgtPort, String tgtDbName, String tgtUsername, String tgtPassword,
-            String outputPath, List<TableMapping> selectedTables) {
+            String outputPath, List<TableMapping> selectedTables, 
+            String sourceSchemaFilter, String targetSchemaFilter, Integer maxTables) {
         try {
             logger.info("Starting database comparison...");
             List<TableMapping> tableMappings = new ArrayList<>();
@@ -449,7 +668,8 @@ public class TableSchemaExtractor {
                 tableMappings = findCommonTables(
                         srcDbType, tgtDbType,
                         srcHost, srcPort, srcDbName, srcUsername, srcPassword,
-                        tgtHost, tgtPort, tgtDbName, tgtUsername, tgtPassword);
+                        tgtHost, tgtPort, tgtDbName, tgtUsername, tgtPassword,
+                        sourceSchemaFilter, targetSchemaFilter, maxTables);
             }
             if (tableMappings.isEmpty()) {
                 logger.warn("No tables found for comparison.");
@@ -486,7 +706,7 @@ public class TableSchemaExtractor {
                         mapping.getSourceDbType(), mapping.getSourceHost(),
                         mapping.getSourcePort(), mapping.getSourceDbName(),
                         mapping.getSourceUsername(), mapping.getSourcePassword(),
-                        mapping.getSourceTable()
+                        mapping.getSourceTable(), null
                     );
 
                     if (!primaryKeys.isEmpty()) {
@@ -499,7 +719,7 @@ public class TableSchemaExtractor {
                             mapping.getSourceDbType(), mapping.getSourceHost(),
                             mapping.getSourcePort(), mapping.getSourceDbName(),
                             mapping.getSourceUsername(), mapping.getSourcePassword(),
-                            mapping.getSourceTable()
+                            mapping.getSourceTable(), null
                         );
 
                         if (!businessKeys.isEmpty()) {
@@ -517,14 +737,14 @@ public class TableSchemaExtractor {
                     mapping.getSourceDbType(), mapping.getSourceHost(),
                     mapping.getSourcePort(), mapping.getSourceDbName(),
                     mapping.getSourceUsername(), mapping.getSourcePassword(),
-                    mapping.getSourceTable()
+                    mapping.getSourceTable(), null
                 );
 
                 List<Map<String, Object>> targetData = getTableData(
                     mapping.getTargetDbType(), mapping.getTargetHost(),
                     mapping.getTargetPort(), mapping.getTargetDbName(),
                     mapping.getTargetUsername(), mapping.getTargetPassword(),
-                    mapping.getTargetTable()
+                    mapping.getTargetTable(), null
                 );
 
                 logger.info("Retrieved {} records from source and {} records from target for table {}",
@@ -841,12 +1061,59 @@ public class TableSchemaExtractor {
     /**
      * Get table data as a list of maps
      */
-    private List<Map<String, Object>> getTableData(String dbType, String host, int port, String dbName, String username, String password, String tableName) {
+    private List<Map<String, Object>> getTableData(String dbType, String host, int port, String dbName, String username, String password, String tableName, String schemaFilter) {
         Connection conn = null;
         try {
             conn = getConnection(dbType, host, port, dbName, username, password);
+            // For Oracle with schema filter, use schema-qualified table name
+            String queryTable = tableName;
+            String schema = null;
+            
+            if (dbType.equalsIgnoreCase("oracle") && schemaFilter != null) {
+                schema = schemaFilter.toUpperCase();
+                // Check if the schema exists and format it properly
+                boolean schemaExists = false;
+                String schemaQuery = "SELECT username FROM all_users WHERE username = ?";
+                
+                try (PreparedStatement stmt = conn.prepareStatement(schemaQuery)) {
+                    stmt.setString(1, schema);
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        if (rs.next()) {
+                            schemaExists = true;
+                        }
+                    }
+                }
+                
+                if (!schemaExists) {
+                    // Try with quotes for special characters
+                    try (PreparedStatement stmt = conn.prepareStatement(schemaQuery)) {
+                        stmt.setString(1, "\"" + schema + "\"");
+                        try (ResultSet rs = stmt.executeQuery()) {
+                            if (rs.next()) {
+                                schema = "\"" + schema + "\"";
+                                schemaExists = true;
+                            }
+                        }
+                    } catch (SQLException e) {
+                        logger.warn("Error checking quoted schema: {}", e.getMessage());
+                    }
+                    
+                    if (!schemaExists) {
+                        logger.warn("Schema '{}' does not exist, falling back to user's schema", schema);
+                        schema = username.toUpperCase();
+                    }
+                }
+                
+                queryTable = schema + "." + tableName;
+                logger.info("Using schema-qualified table name: {}", queryTable);
+            } else if (dbType.equalsIgnoreCase("oracle")) {
+                schema = username.toUpperCase();
+                queryTable = schema + "." + tableName;
+                logger.info("Using schema-qualified table name with default schema: {}", queryTable);
+            }
+            
             Statement stmt = conn.createStatement();
-            ResultSet rs = stmt.executeQuery("SELECT * FROM " + tableName);
+            ResultSet rs = stmt.executeQuery("SELECT * FROM " + queryTable);
 
             ResultSetMetaData metaData = rs.getMetaData();
             int columnCount = metaData.getColumnCount();
@@ -869,5 +1136,146 @@ public class TableSchemaExtractor {
         } finally {
             closeConnection(conn);
         }
+    }
+
+    public List<Map<String, Object>> executeCustomQuery(String dbType, String host, int port,
+                                                        String dbName, String username, String password,
+                                                        String query) {
+        Connection conn = null;
+        List<Map<String, Object>> results = new ArrayList<>();
+
+        try {
+            conn = getConnection(dbType, host, port, dbName, username, password);
+            
+            // For Oracle, add a special handling for schema queries
+            if (dbType.equalsIgnoreCase("oracle") && query.contains("all_tables") && query.contains("owner")) {
+                logger.info("Oracle schema tables query detected: {}", query);
+                // Extract schema name from query for debugging
+                String schemaName = "";
+                if (query.contains("'")) {
+                    schemaName = query.substring(query.indexOf("'") + 1, query.lastIndexOf("'"));
+                    logger.info("Detected schema name from query: {}", schemaName);
+                    
+                    // Try both with and without quotes for schema name
+                    // First try with the exact query
+                    boolean success = executeAndPopulateResults(conn, query, results);
+                    
+                    // If no results, try with quoted schema name
+                    if (!success && !schemaName.startsWith("\"")) {
+                        String quotedQuery = query.replace("'" + schemaName + "'", "'" + "\"" + schemaName + "\"" + "'");
+                        logger.info("Trying with quoted schema name: {}", quotedQuery);
+                        success = executeAndPopulateResults(conn, quotedQuery, results);
+                    }
+                    
+                    // If still no results, try with uppercase schema name
+                    if (!success) {
+                        String upperQuery = query.replace("'" + schemaName + "'", "'" + schemaName.toUpperCase() + "'");
+                        logger.info("Trying with uppercase schema name: {}", upperQuery);
+                        success = executeAndPopulateResults(conn, upperQuery, results);
+                    }
+                    
+                    // If we got results, return them
+                    if (success) {
+                        return results;
+                    }
+                    
+                    // Last resort - list all tables the user has access to
+                    logger.info("Listing all tables user has access to");
+                    String allTablesQuery = "SELECT table_name FROM user_tables";
+                    return executeSimpleQuery(conn, allTablesQuery);
+                }
+            }
+            
+            // Standard execution for other queries
+            Statement stmt = conn.createStatement();
+            ResultSet rs = stmt.executeQuery(query);
+
+            ResultSetMetaData metaData = rs.getMetaData();
+            int columnCount = metaData.getColumnCount();
+
+            while (rs.next()) {
+                Map<String, Object> row = new HashMap<>();
+                for (int i = 1; i <= columnCount; i++) {
+                    String columnName = metaData.getColumnName(i);
+                    Object value = rs.getObject(i);
+                    row.put(columnName, value);
+                }
+                results.add(row);
+            }
+
+            return results;
+        } catch (SQLException e) {
+            logger.error("Error executing custom query: {}", e.getMessage());
+            
+            // For Oracle schema access issues, try a fallback query to user's own tables
+            if (dbType.equalsIgnoreCase("oracle") && 
+                (e.getMessage().contains("table or view does not exist") || 
+                 e.getMessage().contains("insufficient privileges"))) {
+                logger.info("Oracle access issue detected, trying fallback to user_tables");
+                try {
+                    String fallbackQuery = "SELECT table_name FROM user_tables";
+                    return executeSimpleQuery(conn, fallbackQuery);
+                } catch (Exception fallbackEx) {
+                    logger.error("Fallback query also failed: {}", fallbackEx.getMessage());
+                }
+            }
+            
+            throw new RuntimeException("Failed to execute query: " + e.getMessage(), e);
+        } finally {
+            closeConnection(conn);
+        }
+    }
+    
+    // Helper method to execute a query and populate results list
+    private boolean executeAndPopulateResults(Connection conn, String query, List<Map<String, Object>> results) {
+        try {
+            Statement stmt = conn.createStatement();
+            ResultSet rs = stmt.executeQuery(query);
+            
+            ResultSetMetaData metaData = rs.getMetaData();
+            int columnCount = metaData.getColumnCount();
+            boolean hasRows = false;
+            
+            while (rs.next()) {
+                hasRows = true;
+                Map<String, Object> row = new HashMap<>();
+                for (int i = 1; i <= columnCount; i++) {
+                    String columnName = metaData.getColumnName(i);
+                    Object value = rs.getObject(i);
+                    row.put(columnName, value);
+                }
+                results.add(row);
+            }
+            
+            return hasRows;
+        } catch (SQLException e) {
+            logger.warn("Query execution failed: {}", e.getMessage());
+            return false;
+        }
+    }
+    
+    // Execute a simple query and return results
+    private List<Map<String, Object>> executeSimpleQuery(Connection conn, String query) {
+        List<Map<String, Object>> results = new ArrayList<>();
+        try {
+            Statement stmt = conn.createStatement();
+            ResultSet rs = stmt.executeQuery(query);
+            
+            ResultSetMetaData metaData = rs.getMetaData();
+            int columnCount = metaData.getColumnCount();
+            
+            while (rs.next()) {
+                Map<String, Object> row = new HashMap<>();
+                for (int i = 1; i <= columnCount; i++) {
+                    String columnName = metaData.getColumnName(i);
+                    Object value = rs.getObject(i);
+                    row.put(columnName, value);
+                }
+                results.add(row);
+            }
+        } catch (SQLException e) {
+            logger.error("Simple query execution failed: {}", e.getMessage());
+        }
+        return results;
     }
 }

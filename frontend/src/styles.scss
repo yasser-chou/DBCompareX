@@ -1,1 +1,34 @@
 /* You can add global styles to this file, and also import other style files */
+
+.mat-mdc-button-base .mat-spinner {
+  --mdc-circular-progress-active-indicator-color: white;
+}
+
+// Add styles for success snackbar
+.success-snackbar {
+  background-color: #2e7d32 !important;
+  color: white !important;
+}
+
+.error-snackbar {
+  background-color: #c62828 !important;
+  color: white !important;
+}
+
+// Target the "Close" button in snackbars
+.mat-simple-snackbar-action {
+  color: white !important;
+}
+
+// Custom positioning for snackbars
+.custom-snackbar {
+  margin-top: 20px !important;
+  margin-right: 20px !important;
+}
+
+// Override the snackbar container positioning
+.cdk-global-overlay-wrapper {
+  justify-content: flex-end !important;
+  align-items: flex-start !important;
+  margin-top: 80px !important; // Add space from the top of the page
+}

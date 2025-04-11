@@ -1,0 +1,15 @@
+// Add styles for success snackbar
+.success-snackbar {
+  background-color: #2e7d32 !important;
+  color: white !important;
+}
+
+.error-snackbar {
+  background-color: #c62828 !important;
+  color: white !important;
+}
+
+// Target the "Close" button in snackbars
+.mat-simple-snackbar-action {
+  color: white !important;
+} 

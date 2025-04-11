@@ -1,0 +1,22 @@
+private List<Map<String, Object>> getTableData(String dbType, String host, int port, String dbName,
+                                             String username, String password, String tableName,
+                                             String schemaFilter) {
+    Connection conn = null;
+    try {
+        conn = getConnection(dbType, host, port, dbName, username, password);
+
+        // For Oracle with schema filter, use schema-qualified table name
+        String queryTable = tableName;
+        if (dbType.equalsIgnoreCase("oracle") && schemaFilter != null) {
+            queryTable = schemaFilter.toUpperCase() + "." + tableName;
+            logger.info("Using schema-qualified table name: {}", queryTable);
+        }
+
+        Statement stmt = conn.createStatement();
+        ResultSet rs = stmt.executeQuery("SELECT * FROM " + queryTable);
+
+        // Rest of the method remains the same
+        // ...
+    }
+    // ...
+}

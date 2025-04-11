@@ -1,66 +1,38 @@
 <div class="database-config-container">
   <div class="page-title">
-    <h1>Database Configuration<</h1>
-    <p>Kindly connect to Source and Target databases</p>
+    <h1>Database Configuration</h1>
+    <p>Kindly Connect to source and target databases to compare</p>
   </div>
 
   <div class="database-panels">
-    <!--Source Database Panel-->
+    <!-- Source Database Panel -->
     <mat-card class="database-card">
-      <mat-card-header>
-        <mat-card-title>
-          <mat-icon>storage<mat-icon> Source Database
-        </mat-card-title>
-      </mat-card-header>
-      <mat-card-content>
-        <form [formGroup]="sourceDbForm">
-          <mat-form-field appearance="outline" class="full-width">
-            <mat-label>Database Type</mat-label>
-            <mat-select formControlName="dbType">
-              <mat-option value="oracle">Oracle</mat-option>
-              <mat-option value="mysql">MySQL</mat-option>
-              <mat-option value="postgres">PostgreSQL</mat-option>
-              <mat-option value="sqlserver">SQL Server</mat-option>
-            </mat-select>
-          </mat-form-field>
+      <app-database-connection-form 
+        type="source"
+        [initialConfig]="sourceConfig"
+        (connectionStatusChange)="handleSourceStatusChange($event)"
+        (tablesLoaded)="handleSourceTablesLoaded($event)">
+      </app-database-connection-form>
+    </mat-card>
 
-          <mat-form-field appearance="outline" class="full-width">
-              <mat-label>Host</mat-label>
-              <input matInput formControlName="host">
-          </mat-form-field>
-
-          <mat-form-field appearance="outline" class="full-width">
-            <mat-label>Port</mat-label>
-            <input matInput type="number" formControlName="port">
-          </mat-form-field>
-
-          <mat-form-field appearance="outline" class="full-width">
-            <mat-label>Username</mat-label>
-            <input matInput formControlName="username">
-          </mat-form-field>
-
-          <mat-form-field appearance="outline" class="full-width">
-            <mat-label>Password</mat-label>
-            <input matInput type="password" formControlName="password">
-          </mat-form-field>
-
-          <mat-form-field appearance="outline" class="full-width">
-            <mat-label>Schema</mat-label>
-            <input matInput formControlName="schema">
-          </mat-form-field>
-
-          <mat-form-field appearance="outline" class="full-width">
-            <mat-label>Table</mat-label>
-            <mat-select formControlName="table">
-              <mat-option *ngFor="let table of tables" [value]="table">{{table}}</mat-option>
-            </mat-select>
-            <input matInput formControlName="host">
-          </mat-form-field>
-
-
-
-        </form>
-      </mat-card-content>
+    <!-- Target Database Panel -->
+    <mat-card class="database-card">
+      <app-database-connection-form 
+        type="target"
+        [initialConfig]="targetConfig"
+        (connectionStatusChange)="handleTargetStatusChange($event)"
+        (tablesLoaded)="handleTargetTablesLoaded($event)">
+      </app-database-connection-form>
     </mat-card>
   </div>
+
+  <div class="navigation-buttons" *ngIf="canProceed">
+    <button mat-raised-button color="accent" (click)="proceedToComparisonConfig()">
+      Next: Configure Comparison <mat-icon>arrow_forward</mat-icon>
+    </button>
+  </div>
+
+  <mat-progress-spinner *ngIf="isLoading" mode="indeterminate" class="loading-spinner"></mat-progress-spinner>
 </div>
+
+

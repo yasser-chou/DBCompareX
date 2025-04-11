@@ -1,0 +1,152 @@
+.database-config-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px;
+  position: relative;
+}
+
+.page-title {
+  margin-bottom: 24px;
+  text-align: center;
+
+  h1 {
+    margin: 0;
+    font-size: 28px;
+    font-weight: 600;
+    color: #1a237e;
+  }
+
+  p {
+    margin: 8px 0 0;
+    color: #5c6bc0;
+    font-size: 16px;
+  }
+}
+
+.database-panels {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 35px;
+  margin-bottom: 24px;
+
+  @media (max-width: 960px) {
+    grid-template-columns: 1fr;
+  }
+
+  // Make the mat-card items equal height
+  .database-card {
+    height: 100%; // Make cards take full height of the container
+    display: flex;
+    flex-direction: column;
+
+    // Make the form component fill the available space
+    app-database-connection-form {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+
+      // Target the button container to ensure it's aligned at the bottom
+      ::ng-deep .center-actions {
+        margin-top: auto;
+      }
+    }
+  }
+}
+
+.database-card {
+  border-radius: 12px;
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+  background-color: #f8f9ff;
+  border: 1px solid #e0e6ff;
+  transition: transform 0.2s, box-shadow 0.2s;
+
+  &:hover {
+    transform: translateY(0);
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.18);
+  }
+}
+
+.status-container {
+  margin-bottom: 24px;
+}
+
+.status-card {
+  border-radius: 12px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  background-color: #fafafa;
+}
+
+.connection-status {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+  padding: 12px;
+  border-radius: 8px;
+  font-weight: 500;
+
+  mat-icon {
+    margin-right: 8px;
+  }
+
+  &.success {
+    color: #2e7d32;
+    background-color: rgba(46, 125, 50, 0.1);
+    border-left: 4px solid #2e7d32;
+  }
+
+  &.error {
+    color: #c62828;
+    background-color: rgba(198, 40, 40, 0.1);
+    border-left: 4px solid #c62828;
+  }
+}
+
+.navigation-buttons {
+  display: flex;
+  justify-content: flex-end;
+
+  button {
+    border-radius: 24px;
+    padding: 8px 20px;
+    font-weight: 500;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+    transition: all 0.2s;
+
+    &:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 12px rgba(0, 0, 0, 0.2);
+    }
+
+    mat-icon {
+      margin-left: 6px;
+    }
+  }
+}
+
+.loading-spinner {
+  display: block;
+  margin: 24px auto;
+}
+
+.status-card {
+  border: none; // Remove the border
+  box-shadow: none; // Remove the shadow
+  background-color: transparent; // Make the background transparent if needed
+}
+
+.success-snackbar {
+  background-color: #2e7d32 !important;
+  color: white !important;
+}
+
+.error-snackbar {
+  background-color: #c62828 !important;
+  color: white !important;
+}
+
+// Target the "Close" button in snackbars
+.mat-simple-snackbar-action {
+  color: white !important;
+}
+
+

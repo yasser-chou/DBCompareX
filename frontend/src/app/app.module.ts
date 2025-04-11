@@ -4,6 +4,7 @@ import { BrowserAnimationsModule } from '@angular/platform-browser/animations';
 import { HttpClientModule } from '@angular/common/http';
 import { FormsModule, ReactiveFormsModule } from '@angular/forms';
 import { FlexLayoutModule } from '@angular/flex-layout';
+import { RouterModule } from '@angular/router';
 
 // Material Imports
 import { MatToolbarModule } from '@angular/material/toolbar';
@@ -28,6 +29,7 @@ import { NavBarComponent } from './components/nav-bar/nav-bar.component';
 import { DatabaseConfigComponent } from './components/database-config/database-config.component';
 import { ComparisonConfigComponent } from './components/comparison-config/comparison-config.component';
 import { ResultsComponent } from './components/results/results.component';
+import { DatabaseConnectionFormComponent } from './components/database-connection-form/database-connection-form.component';
 
 // Services
 import { DatabaseService } from './services/database.service';
@@ -42,7 +44,8 @@ import { AppRoutingModule } from './app-routing.module';
     NavBarComponent,
     DatabaseConfigComponent,
     ComparisonConfigComponent,
-    ResultsComponent
+    ResultsComponent,
+    DatabaseConnectionFormComponent
   ],
   imports: [
     BrowserModule,
@@ -51,6 +54,7 @@ import { AppRoutingModule } from './app-routing.module';
     FormsModule,
     ReactiveFormsModule,
     FlexLayoutModule,
+    RouterModule,
     AppRoutingModule,
     MatToolbarModule,
     MatIconModule,

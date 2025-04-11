@@ -121,7 +121,8 @@ public class TableSchemaExtractorController {
                     request.getSourceUsername(), request.getSourcePassword(),
                     request.getTargetHost(), request.getTargetPort(), request.getTargetDbName(),
                     request.getTargetUsername(), request.getTargetPassword(),
-                    outputPath, selectedTables); // Pass selectedTables to the service
+                    outputPath, selectedTables, 
+                    request.getSourceSchemaFilter(), request.getTargetSchemaFilter(), request.getMaxTables());
             return handleFileResponse(reportFile, "Selected tables comparison completed successfully");
         } catch (Exception e) {
             logger.error("Error comparing selected tables: ", e);
@@ -186,7 +187,8 @@ public class TableSchemaExtractorController {
                     request.getSourceHost(), request.getSourcePort(), request.getSourceDbName(),
                     request.getSourceUsername(), request.getSourcePassword(),
                     request.getTargetHost(), request.getTargetPort(), request.getTargetDbName(),
-                    request.getTargetUsername(), request.getTargetPassword());
+                    request.getTargetUsername(), request.getTargetPassword(),
+                    request.getSourceSchemaFilter(), request.getTargetSchemaFilter(), request.getMaxTables());
             // Transform TableMapping list into Map
             Map<String, List<String>> availableTables = new HashMap<>();
             availableTables.put("commonTables", tableMappings.stream()
@@ -197,6 +199,28 @@ public class TableSchemaExtractorController {
             logger.error("Error retrieving available tables: ", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(createErrorResponse("Error retrieving available tables: " + e.getMessage()));
+        }
+    }
+
+    @PostMapping("/execute-query")
+    public ResponseEntity<?> executeQuery(@RequestBody Map<String, Object> request) {
+        try {
+            String dbType = (String) request.get("sourceDbType");
+            String host = (String) request.get("sourceHost");
+            String port = (String) request.get("sourcePort");
+            String dbName = (String) request.get("sourceDbName");
+            String username = (String) request.get("sourceUsername");
+            String password = (String) request.get("sourcePassword");
+            String query = (String) request.get("query");
+
+            List<Map<String, Object>> results = tableSchemaExtractor.executeCustomQuery(
+                    dbType, host, Integer.parseInt(port), dbName, username, password, query);
+
+            return ResponseEntity.ok(Map.of("results", results));
+        } catch (Exception e) {
+            logger.error("Error executing query: ", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", e.getMessage()));
         }
     }
 }
